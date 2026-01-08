@@ -10,7 +10,6 @@ const generateOrderId = () => {
   const random = Math.random().toString(36).substr(2, 9).toUpperCase();
   return `ORD-${timestamp}-${random}`;
 };
-
 const createOrder = async (req, res) => {
   try {
     const buyerId = req.user.id;
@@ -80,6 +79,7 @@ const createOrder = async (req, res) => {
 
       productUpdates.push({
         productId: product._id,
+        price: product.price, // ADD THIS LINE
         quantity: item.quantity
       });
     }
@@ -134,11 +134,13 @@ const createOrder = async (req, res) => {
     await order.save();
 
     for (const update of productUpdates) {
+      const revenue = update.price * update.quantity;
+      
       await Product.findByIdAndUpdate(update.productId, {
         $inc: { 
           stock: -update.quantity,
           'stats.sales': update.quantity,
-          'stats.revenue': update.productId.price * update.quantity
+          'stats.revenue': revenue // FIX: Use the calculated revenue
         }
       });
     }
@@ -167,7 +169,14 @@ const createOrder = async (req, res) => {
     console.error('Create order error:', error);
     res.status(500).json({ message: 'Failed to create order', error: error.message });
   }
-};
+
+  // In your order.controller.js or wherever orders are created
+console.log('Order being saved to database:', {
+  totalAmount: order.totalAmount,
+  type: typeof order.totalAmount,
+  stringValue: order.totalAmount.toString()
+});
+ };
 
 const getMyOrders = async (req, res) => {
   try {
@@ -682,6 +691,8 @@ const trackOrder = async (req, res) => {
     console.error('Track order error:', error);
     res.status(500).json({ message: 'Failed to track order', error: error.message });
   }
+
+
 };
 
 module.exports = {

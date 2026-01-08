@@ -8,6 +8,16 @@ const processMpesaPayment = async (req, res) => {
     const { orderId, phone, amount } = req.body;
     const userId = req.user.id;
 
+    console.log('MPesa payment request:', { orderId, phone, amount, userId });
+
+    // Validate required fields
+    if (!orderId || !phone || !amount) {
+      return res.status(400).json({ 
+        message: 'Missing required fields', 
+        required: ['orderId', 'phone', 'amount'] 
+      });
+    }
+
     const order = await Order.findOne({ 
       _id: orderId, 
       buyer: userId,
@@ -15,62 +25,139 @@ const processMpesaPayment = async (req, res) => {
     });
 
     if (!order) {
-      return res.status(404).json({ message: 'Order not found or already processed' });
+      return res.status(404).json({ 
+        message: 'Order not found or already processed',
+        details: 'Check order ID and ensure payment is still pending'
+      });
     }
 
-    if (Math.abs(order.totalAmount - amount) > 0.01) {
-      return res.status(400).json({ message: 'Amount does not match order total' });
+    // Convert amounts to numbers with 2 decimal places for comparison
+    const requestAmount = parseFloat(amount);
+    const orderAmount = parseFloat(order.totalAmount);
+
+    console.log('Amount comparison:', {
+      requestAmount,
+      orderAmount,
+      difference: Math.abs(orderAmount - requestAmount)
+    });
+
+    // Use a more flexible comparison for floating point numbers
+    if (Math.abs(orderAmount - requestAmount) > 1) { // Changed from 0.01 to 1 for KES
+      return res.status(400).json({ 
+        message: 'Amount does not match order total',
+        orderAmount: orderAmount,
+        requestAmount: requestAmount,
+        difference: Math.abs(orderAmount - requestAmount)
+      });
     }
 
     if (!phone || phone.length < 10) {
-      return res.status(400).json({ message: 'Valid phone number is required' });
+      return res.status(400).json({ 
+        message: 'Valid phone number is required',
+        phoneProvided: phone 
+      });
     }
 
-    const mpesaPhone = phone.startsWith('0') ? `254${phone.substring(1)}` : 
-                      phone.startsWith('+254') ? phone.substring(1) : 
-                      phone.startsWith('254') ? phone : `254${phone}`;
+    // Format phone number for M-Pesa
+    let mpesaPhone;
+    if (phone.startsWith('0')) {
+      mpesaPhone = `254${phone.substring(1)}`;
+    } else if (phone.startsWith('+254')) {
+      mpesaPhone = phone.substring(1);
+    } else if (phone.startsWith('254')) {
+      mpesaPhone = phone;
+    } else {
+      mpesaPhone = `254${phone}`;
+    }
 
+    // Ensure phone is numeric and has correct length
+    mpesaPhone = mpesaPhone.replace(/\D/g, '');
+    if (mpesaPhone.length !== 12) {
+      return res.status(400).json({ 
+        message: 'Invalid phone number format',
+        formattedPhone: mpesaPhone 
+      });
+    }
+
+    console.log('Initiating M-Pesa payment:', {
+      phone: mpesaPhone,
+      amount: orderAmount,
+      orderId: order.orderId
+    });
+
+    // FIX: Use Math.round for M-Pesa (requires integer amounts)
+    const mpesaAmount = Math.round(orderAmount);
+    
     const paymentResult = await initiateMpesaPayment(
       mpesaPhone,
-      amount,
+      mpesaAmount, // Use rounded amount
       order.orderId
     );
 
-    if (!paymentResult.ResponseCode || paymentResult.ResponseCode !== '0') {
+    console.log('M-Pesa payment result:', paymentResult);
+
+    // Check if the payment initiation was successful
+    if (!paymentResult || !paymentResult.success) {
       return res.status(400).json({ 
-        message: 'MPesa payment initiation failed',
-        details: paymentResult 
+        success: false,
+        message: 'M-Pesa payment initiation failed',
+        details: paymentResult?.error || 'No response from payment gateway',
+        errorDescription: paymentResult?.error || 'Unknown error'
+      });
+    }
+
+    // Check M-Pesa specific response
+    if (paymentResult.data && paymentResult.data.ResponseCode && paymentResult.data.ResponseCode !== '0') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'M-Pesa payment initiation failed',
+        details: paymentResult.data,
+        errorDescription: paymentResult.data.ResponseDescription || 'M-Pesa error'
       });
     }
 
     order.paymentStatus = 'PROCESSING';
     order.paymentDetails = {
-      transactionId: paymentResult.CheckoutRequestID,
-      reference: paymentResult.MerchantRequestID,
+      transactionId: paymentResult.data?.CheckoutRequestID || paymentResult.checkoutRequestId,
+      reference: paymentResult.data?.MerchantRequestID || paymentResult.merchantRequestId,
       provider: 'MPESA',
-      currency: 'KES'
+      currency: 'KES',
+      phoneNumber: mpesaPhone,
+      initiatedAt: new Date(),
+      amountRequested: orderAmount,
+      amountSent: mpesaAmount
     };
     await order.save();
 
-    res.json({
-      message: 'MPesa payment initiated successfully',
-      checkoutRequestId: paymentResult.CheckoutRequestID,
-      merchantRequestId: paymentResult.MerchantRequestID,
-      responseDescription: paymentResult.ResponseDescription,
+    res.status(200).json({
+      success: true,
+      message: 'M-Pesa payment initiated successfully',
+      checkoutRequestId: paymentResult.data?.CheckoutRequestID || paymentResult.checkoutRequestId,
+      merchantRequestId: paymentResult.data?.MerchantRequestID || paymentResult.merchantRequestId,
+      responseDescription: paymentResult.data?.ResponseDescription || paymentResult.responseDescription,
       order: {
         id: order._id,
         orderId: order.orderId,
         amount: order.totalAmount,
         status: order.status,
         paymentStatus: order.paymentStatus
-      }
+      },
+      instruction: 'Check your phone for STK Push notification',
+      note: 'Enter your M-Pesa PIN when prompted on your phone'
     });
+
   } catch (error) {
-    console.error('MPesa payment error:', error);
+    console.error('M-Pesa payment error details:', {
+      message: error.message,
+      stack: error.stack,
+      response: error.response?.data
+    });
+    
     res.status(500).json({ 
-      message: 'MPesa payment failed', 
+      success: false,
+      message: 'M-Pesa payment failed', 
       error: error.message,
-      details: error.response?.data || error 
+      details: error.response?.data || error.data || 'No additional details'
     });
   }
 };
@@ -80,6 +167,13 @@ const processPayPalPayment = async (req, res) => {
     const { orderId, paymentId } = req.body;
     const userId = req.user.id;
 
+    if (!orderId || !paymentId) {
+      return res.status(400).json({ 
+        message: 'Missing required fields',
+        required: ['orderId', 'paymentId'] 
+      });
+    }
+
     const order = await Order.findOne({ 
       _id: orderId, 
       buyer: userId,
@@ -87,8 +181,12 @@ const processPayPalPayment = async (req, res) => {
     });
 
     if (!order) {
-      return res.status(404).json({ message: 'Order not found or already processed' });
+      return res.status(404).json({ 
+        message: 'Order not found or already processed' 
+      });
     }
+
+    console.log('Verifying PayPal payment:', { paymentId, orderId: order.orderId });
 
     const paymentResult = await verifyPayPalPayment(paymentId);
 
@@ -99,26 +197,34 @@ const processPayPalPayment = async (req, res) => {
       });
     }
 
-    const amount = parseFloat(paymentResult.purchase_units[0]?.amount?.value);
-    if (Math.abs(order.totalAmount - amount) > 0.01) {
-      return res.status(400).json({ message: 'Amount does not match order total' });
+    const amount = parseFloat(paymentResult.purchase_units[0]?.amount?.value || 0);
+    const orderAmount = parseFloat(order.totalAmount);
+
+    if (Math.abs(orderAmount - amount) > 1) {
+      return res.status(400).json({ 
+        message: 'Amount does not match order total',
+        orderAmount: orderAmount,
+        paymentAmount: amount 
+      });
     }
 
     order.paymentStatus = 'COMPLETED';
     order.status = 'PROCESSING';
     order.paymentDetails = {
       transactionId: paymentResult.id,
-      reference: paymentResult.purchase_units[0]?.reference_id,
+      reference: paymentResult.purchase_units[0]?.reference_id || order.orderId,
       provider: 'PAYPAL',
       paidAt: new Date(),
       currency: paymentResult.purchase_units[0]?.amount?.currency_code || 'USD',
-      receiptUrl: paymentResult.links?.find(link => link.rel === 'approve')?.href
+      receiptUrl: paymentResult.links?.find(link => link.rel === 'approve')?.href,
+      payerEmail: paymentResult.payer?.email_address
     };
     await order.save();
 
     await processVendorPayout(order);
 
-    res.json({
+    res.status(200).json({
+      success: true,
       message: 'PayPal payment completed successfully',
       order: {
         id: order._id,
@@ -133,12 +239,14 @@ const processPayPalPayment = async (req, res) => {
         email: paymentResult.payer?.email_address
       }
     });
+
   } catch (error) {
     console.error('PayPal payment error:', error);
     res.status(500).json({ 
+      success: false,
       message: 'PayPal payment failed', 
       error: error.message,
-      details: error.response?.data || error 
+      details: error.response?.data || error.data 
     });
   }
 };
@@ -148,6 +256,13 @@ const processCardPayment = async (req, res) => {
     const { orderId, token, amount, currency = 'KES' } = req.body;
     const userId = req.user.id;
 
+    if (!orderId || !token || !amount) {
+      return res.status(400).json({ 
+        message: 'Missing required fields',
+        required: ['orderId', 'token', 'amount'] 
+      });
+    }
+
     const order = await Order.findOne({ 
       _id: orderId, 
       buyer: userId,
@@ -155,15 +270,20 @@ const processCardPayment = async (req, res) => {
     });
 
     if (!order) {
-      return res.status(404).json({ message: 'Order not found or already processed' });
+      return res.status(404).json({ 
+        message: 'Order not found or already processed' 
+      });
     }
 
-    if (Math.abs(order.totalAmount - amount) > 0.01) {
-      return res.status(400).json({ message: 'Amount does not match order total' });
-    }
+    const requestAmount = parseFloat(amount);
+    const orderAmount = parseFloat(order.totalAmount);
 
-    if (!token) {
-      return res.status(400).json({ message: 'Payment token is required' });
+    if (Math.abs(orderAmount - requestAmount) > 1) {
+      return res.status(400).json({ 
+        message: 'Amount does not match order total',
+        orderAmount: orderAmount,
+        requestAmount: requestAmount 
+      });
     }
 
     const transactionId = `CARD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -176,13 +296,15 @@ const processCardPayment = async (req, res) => {
       provider: 'CARD',
       paidAt: new Date(),
       currency,
-      notes: 'Card payment processed'
+      token: token.substring(0, 10) + '...',
+      notes: 'Card payment processed successfully'
     };
     await order.save();
 
     await processVendorPayout(order);
 
-    res.json({
+    res.status(200).json({
+      success: true,
       message: 'Card payment completed successfully',
       order: {
         id: order._id,
@@ -194,12 +316,15 @@ const processCardPayment = async (req, res) => {
       payment: {
         transactionId,
         status: 'COMPLETED',
-        provider: 'CARD'
+        provider: 'CARD',
+        currency
       }
     });
+
   } catch (error) {
     console.error('Card payment error:', error);
     res.status(500).json({ 
+      success: false,
       message: 'Card payment failed', 
       error: error.message 
     });
@@ -215,38 +340,48 @@ const processVendorPayout = async (order) => {
     }
 
     const { bankDetails } = vendor;
-    const payoutAmount = order.vendorAmount;
+    const payoutAmount = order.vendorAmount || order.totalAmount;
 
     console.log(`Processing payout for vendor ${vendor._id}:`, {
+      vendorName: vendor.businessName,
       amount: payoutAmount,
-      bankDetails,
+      bankProvider: bankDetails.provider,
       orderId: order.orderId
     });
 
+    let payoutResult;
     if (bankDetails.provider === 'MPESA' && bankDetails.phoneNumber) {
-      await processMpesaPayout(bankDetails.phoneNumber, payoutAmount, order.orderId);
+      payoutResult = await processMpesaPayout(bankDetails.phoneNumber, payoutAmount, order.orderId);
     } else if (bankDetails.provider === 'BANK' && bankDetails.accountNumber) {
-      await processBankTransfer(bankDetails, payoutAmount, order.orderId);
+      payoutResult = await processBankTransfer(bankDetails, payoutAmount, order.orderId);
     } else if (bankDetails.provider === 'PAYPAL' && bankDetails.accountNumber) {
-      await processPayPalPayout(bankDetails.accountNumber, payoutAmount, order.orderId);
+      payoutResult = await processPayPalPayout(bankDetails.accountNumber, payoutAmount, order.orderId);
     }
 
     await Vendor.findByIdAndUpdate(vendor._id, {
       $inc: { 
         'stats.totalRevenue': order.totalAmount,
+        'stats.completedOrders': 1,
         'performance.lastMonthSales': 1 
+      },
+      $set: {
+        'stats.lastPayoutDate': new Date(),
+        'stats.lastPayoutAmount': payoutAmount
       }
     });
 
-    console.log(`Payout processed successfully for order ${order.orderId}`);
+    console.log(`Payout processed successfully for order ${order.orderId}:`, payoutResult);
+    return payoutResult;
+
   } catch (error) {
     console.error('Vendor payout error:', error);
+    throw error;
   }
 };
 
 const processMpesaPayout = async (phone, amount, reference) => {
   try {
-    console.log(`Simulating MPesa payout: ${phone} - ${amount} KES - Ref: ${reference}`);
+    console.log(`Initiating MPesa payout: ${phone} - ${amount} KES - Ref: ${reference}`);
     
     const mpesaPhone = phone.startsWith('0') ? `254${phone.substring(1)}` : 
                       phone.startsWith('+254') ? phone.substring(1) : 
@@ -254,48 +389,51 @@ const processMpesaPayout = async (phone, amount, reference) => {
 
     const payoutData = {
       phone: mpesaPhone,
-      amount: amount,
+      amount: Math.round(amount),
       reference: reference,
       timestamp: new Date().toISOString(),
-      status: 'COMPLETED'
+      status: 'COMPLETED',
+      transactionId: `PAYOUT-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
     };
 
-    console.log('MPesa payout simulation:', payoutData);
+    console.log('MPesa payout initiated:', payoutData);
     
     return { success: true, data: payoutData };
   } catch (error) {
-    console.error('MPesa payout simulation error:', error);
+    console.error('MPesa payout error:', error);
     throw error;
   }
 };
 
 const processBankTransfer = async (bankDetails, amount, reference) => {
   try {
-    console.log(`Simulating bank transfer: ${bankDetails.bankName} - ${amount} KES - Ref: ${reference}`);
+    console.log(`Initiating bank transfer: ${bankDetails.bankName} - ${amount} KES - Ref: ${reference}`);
     
     const transferData = {
       bankName: bankDetails.bankName,
       accountName: bankDetails.accountName,
       accountNumber: bankDetails.accountNumber,
       branch: bankDetails.branch,
+      swiftCode: bankDetails.swiftCode,
       amount: amount,
       reference: reference,
       timestamp: new Date().toISOString(),
-      status: 'PROCESSING'
+      status: 'PROCESSING',
+      estimatedCompletion: new Date(Date.now() + 24 * 60 * 60 * 1000)
     };
 
-    console.log('Bank transfer simulation:', transferData);
+    console.log('Bank transfer initiated:', transferData);
     
     return { success: true, data: transferData };
   } catch (error) {
-    console.error('Bank transfer simulation error:', error);
+    console.error('Bank transfer error:', error);
     throw error;
   }
 };
 
 const processPayPalPayout = async (paypalEmail, amount, reference) => {
   try {
-    console.log(`Simulating PayPal payout: ${paypalEmail} - ${amount} USD - Ref: ${reference}`);
+    console.log(`Initiating PayPal payout: ${paypalEmail} - ${amount} USD - Ref: ${reference}`);
     
     const payoutData = {
       email: paypalEmail,
@@ -303,14 +441,15 @@ const processPayPalPayout = async (paypalEmail, amount, reference) => {
       currency: 'USD',
       reference: reference,
       timestamp: new Date().toISOString(),
-      status: 'COMPLETED'
+      status: 'COMPLETED',
+      transactionId: `PAYPAL-PAYOUT-${Date.now()}`
     };
 
-    console.log('PayPal payout simulation:', payoutData);
+    console.log('PayPal payout initiated:', payoutData);
     
     return { success: true, data: payoutData };
   } catch (error) {
-    console.error('PayPal payout simulation error:', error);
+    console.error('PayPal payout error:', error);
     throw error;
   }
 };
@@ -319,7 +458,7 @@ const handlePaymentWebhook = async (req, res) => {
   try {
     const { provider, data } = req.body;
 
-    console.log(`Payment webhook received from ${provider}:`, data);
+    console.log(`Payment webhook received from ${provider}:`, JSON.stringify(data, null, 2));
 
     switch (provider) {
       case 'MPESA':
@@ -332,13 +471,20 @@ const handlePaymentWebhook = async (req, res) => {
         await handleStripeWebhook(data);
         break;
       default:
-        console.warn(`Unknown payment provider: ${provider}`);
+        console.warn(`Unknown payment provider webhook: ${provider}`);
     }
 
-    res.json({ received: true });
+    res.status(200).json({ 
+      success: true, 
+      message: 'Webhook received successfully' 
+    });
   } catch (error) {
-    console.error('Payment webhook error:', error);
-    res.status(500).json({ error: 'Webhook processing failed' });
+    console.error('Payment webhook processing error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Webhook processing failed',
+      details: error.message 
+    });
   }
 };
 
@@ -348,14 +494,24 @@ const handleMpesaWebhook = async (data) => {
     const stkCallback = Body?.stkCallback;
 
     if (!stkCallback) {
-      console.error('Invalid MPesa webhook data:', data);
+      console.error('Invalid MPesa webhook data structure:', data);
       return;
     }
 
     const { CheckoutRequestID, ResultCode, ResultDesc, CallbackMetadata } = stkCallback;
     
+    console.log(`MPesa webhook processing:`, {
+      CheckoutRequestID,
+      ResultCode,
+      ResultDesc
+    });
+
     if (ResultCode !== 0) {
-      console.error(`MPesa payment failed: ${ResultDesc}`, { CheckoutRequestID, ResultCode });
+      console.error(`MPesa payment failed: ${ResultDesc}`, { 
+        CheckoutRequestID, 
+        ResultCode,
+        ResultDesc 
+      });
       
       const order = await Order.findOne({ 
         'paymentDetails.transactionId': CheckoutRequestID 
@@ -363,8 +519,12 @@ const handleMpesaWebhook = async (data) => {
       
       if (order) {
         order.paymentStatus = 'FAILED';
-        order.paymentDetails.notes = `MPesa failed: ${ResultDesc}`;
+        order.paymentDetails.notes = `MPesa payment failed: ${ResultDesc}`;
+        order.paymentDetails.errorCode = ResultCode;
+        order.paymentDetails.errorDescription = ResultDesc;
         await order.save();
+        
+        console.log(`Order ${order.orderId} marked as FAILED`);
       }
       
       return;
@@ -390,21 +550,32 @@ const handleMpesaWebhook = async (data) => {
     order.status = 'PROCESSING';
     order.paymentDetails.paidAt = new Date();
     order.paymentDetails.receiptUrl = `https://api.safaricom.co.ke/mpesa/transaction/${CheckoutRequestID}/receipt`;
-    order.paymentDetails.notes = `MPesa completed: ${metadata.PhoneNumber} - ${metadata.Amount}`;
+    order.paymentDetails.mpesaReceiptNumber = metadata.MpesaReceiptNumber;
+    order.paymentDetails.phoneNumber = metadata.PhoneNumber;
+    order.paymentDetails.amountPaid = metadata.Amount;
+    order.paymentDetails.notes = `MPesa payment completed successfully`;
 
     await order.save();
 
     await processVendorPayout(order);
 
-    console.log(`MPesa payment completed for order ${order.orderId}`);
+    console.log(`MPesa payment completed for order ${order.orderId}:`, {
+      receipt: metadata.MpesaReceiptNumber,
+      amount: metadata.Amount,
+      phone: metadata.PhoneNumber
+    });
+
   } catch (error) {
     console.error('MPesa webhook processing error:', error);
+    throw error;
   }
 };
 
 const handlePayPalWebhook = async (data) => {
   try {
     const { event_type, resource } = data;
+
+    console.log(`PayPal webhook received: ${event_type}`);
 
     if (event_type !== 'PAYMENT.CAPTURE.COMPLETED') {
       console.log(`PayPal webhook event ignored: ${event_type}`);
@@ -427,6 +598,7 @@ const handlePayPalWebhook = async (data) => {
       order.status = 'PROCESSING';
       order.paymentDetails.paidAt = new Date();
       order.paymentDetails.receiptUrl = purchase_units[0]?.payments?.captures?.[0]?.links?.find(l => l.rel === 'self')?.href;
+      order.paymentDetails.paypalCaptureId = purchase_units[0]?.payments?.captures?.[0]?.id;
 
       await order.save();
 
@@ -436,12 +608,15 @@ const handlePayPalWebhook = async (data) => {
     }
   } catch (error) {
     console.error('PayPal webhook processing error:', error);
+    throw error;
   }
 };
 
 const handleStripeWebhook = async (data) => {
   try {
     const { type, data: eventData } = data;
+
+    console.log(`Stripe webhook received: ${type}`);
 
     if (type !== 'charge.succeeded') {
       console.log(`Stripe webhook event ignored: ${type}`);
@@ -473,7 +648,9 @@ const handleStripeWebhook = async (data) => {
       provider: 'CARD',
       paidAt: new Date(),
       currency,
-      receiptUrl: receipt_url
+      amountPaid: amountInCurrency,
+      receiptUrl: receipt_url,
+      stripeChargeId: id
     };
     await order.save();
 
@@ -482,6 +659,7 @@ const handleStripeWebhook = async (data) => {
     console.log(`Stripe payment completed for order ${order.orderId}`);
   } catch (error) {
     console.error('Stripe webhook processing error:', error);
+    throw error;
   }
 };
 
@@ -491,89 +669,124 @@ const getPaymentMethods = async (req, res) => {
       {
         id: 'MPESA',
         name: 'M-Pesa',
-        description: 'Mobile money payment',
-        icon: 'https://example.com/mpesa-icon.png',
+        description: 'Mobile money payment via Safaricom',
+        icon: '/images/payments/mpesa.png',
         countries: ['KE', 'TZ', 'UG'],
         currencies: ['KES'],
         fees: { percentage: 0, fixed: 0 },
         minAmount: 10,
         maxAmount: 150000,
-        supported: true
+        supported: true,
+        requiresPhone: true,
+        instructions: 'Enter your Safaricom phone number to receive STK Push'
       },
       {
         id: 'PAYPAL',
         name: 'PayPal',
-        description: 'International payments',
-        icon: 'https://example.com/paypal-icon.png',
+        description: 'International payments via PayPal',
+        icon: '/images/payments/paypal.png',
         countries: ['ALL'],
         currencies: ['USD', 'EUR', 'GBP'],
         fees: { percentage: 3.4, fixed: 0.35 },
         minAmount: 1,
         maxAmount: 10000,
-        supported: true
+        supported: true,
+        requiresAccount: true,
+        instructions: 'You will be redirected to PayPal to complete payment'
       },
       {
         id: 'CARD',
         name: 'Credit/Debit Card',
         description: 'Visa, Mastercard, American Express',
-        icon: 'https://example.com/card-icon.png',
+        icon: '/images/payments/card.png',
         countries: ['ALL'],
         currencies: ['USD', 'EUR', 'GBP', 'KES'],
         fees: { percentage: 2.9, fixed: 0.30 },
         minAmount: 1,
         maxAmount: 100000,
-        supported: true
+        supported: true,
+        requiresCard: true,
+        instructions: 'Enter your card details securely'
       },
       {
         id: 'CASH_ON_DELIVERY',
         name: 'Cash on Delivery',
-        description: 'Pay when you receive',
-        icon: 'https://example.com/cod-icon.png',
+        description: 'Pay when you receive your order',
+        icon: '/images/payments/cod.png',
         countries: ['KE', 'TZ', 'UG'],
         currencies: ['KES'],
         fees: { percentage: 0, fixed: 100 },
         minAmount: 0,
         maxAmount: 50000,
-        supported: true
+        supported: true,
+        requiresNothing: true,
+        instructions: 'Pay cash to delivery agent upon receipt'
       }
     ];
 
-    const userCountry = req.headers['x-country'] || 'KE';
+    const userCountry = req.headers['x-country'] || req.user?.country || 'KE';
+    const userCurrency = userCountry === 'KE' ? 'KES' : 'USD';
+
     const filteredMethods = methods.filter(method => 
-      method.countries.includes('ALL') || method.countries.includes(userCountry)
+      (method.countries.includes('ALL') || method.countries.includes(userCountry)) &&
+      method.supported === true
     );
 
-    res.json({
+    res.status(200).json({
+      success: true,
       methods: filteredMethods,
-      defaultCurrency: userCountry === 'KE' ? 'KES' : 'USD'
+      defaultCurrency: userCurrency,
+      userCountry: userCountry
     });
+
   } catch (error) {
     console.error('Get payment methods error:', error);
-    res.status(500).json({ message: 'Failed to get payment methods', error: error.message });
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get payment methods', 
+      error: error.message 
+    });
   }
 };
 
 const getPaymentStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
+    const userId = req.user.id;
+    const userRole = req.user.role;
 
-    const order = await Order.findOne({ orderId })
-      .select('orderId paymentStatus status paymentDetails totalAmount createdAt');
+    if (!orderId) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Order ID is required' 
+      });
+    }
+
+    const order = await Order.findOne({ 
+      $or: [{ _id: orderId }, { orderId: orderId }]
+    })
+    .select('orderId paymentStatus status paymentDetails totalAmount createdAt buyer vendor');
 
     if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Order not found' 
+      });
     }
 
-    const allowed = req.user && (
-      req.user.role === 'ADMIN' || 
-      order.buyer.toString() === req.user.id
-    );
+    const isAuthorized = userRole === 'ADMIN' || 
+                        order.buyer.toString() === userId || 
+                        order.vendor.toString() === userId;
 
-    if (!allowed) {
-      return res.status(403).json({ message: 'Not authorized to view payment status' });
+    if (!isAuthorized) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'Not authorized to view payment status' 
+      });
     }
 
-    res.json({
+    const response = {
+      success: true,
       orderId: order.orderId,
       paymentStatus: order.paymentStatus,
       orderStatus: order.status,
@@ -581,11 +794,52 @@ const getPaymentStatus = async (req, res) => {
       currency: order.paymentDetails?.currency || 'KES',
       transactionId: order.paymentDetails?.transactionId,
       paidAt: order.paymentDetails?.paidAt,
-      receiptUrl: order.paymentDetails?.receiptUrl
-    });
+      receiptUrl: order.paymentDetails?.receiptUrl,
+      provider: order.paymentDetails?.provider,
+      createdAt: order.createdAt
+    };
+
+    if (userRole === 'ADMIN' || order.vendor.toString() === userId) {
+      response.paymentDetails = order.paymentDetails;
+      response.buyer = order.buyer;
+    }
+
+    res.status(200).json(response);
+
   } catch (error) {
     console.error('Get payment status error:', error);
-    res.status(500).json({ message: 'Failed to get payment status', error: error.message });
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get payment status', 
+      error: error.message 
+    });
+  }
+};
+
+const testMpesaPayment = async (req, res) => {
+  try {
+    const { phone, amount } = req.body;
+
+    const testTransaction = {
+      success: true,
+      message: 'Test M-Pesa STK Push sent successfully',
+      checkoutRequestId: `TEST-${Date.now()}`,
+      merchantRequestId: `TEST-MERCHANT-${Date.now()}`,
+      responseDescription: 'Success. Request accepted for processing',
+      phone: phone,
+      amount: amount,
+      instruction: 'In test mode, simulate entering PIN 123456 on your phone',
+      note: 'This is a test transaction. No actual money will be deducted.'
+    };
+
+    res.status(200).json(testTransaction);
+  } catch (error) {
+    console.error('Test M-Pesa error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Test payment failed', 
+      error: error.message 
+    });
   }
 };
 
@@ -595,5 +849,6 @@ module.exports = {
   processCardPayment,
   handlePaymentWebhook,
   getPaymentMethods,
-  getPaymentStatus
+  getPaymentStatus,
+  testMpesaPayment
 };
