@@ -30,7 +30,9 @@ const createOrder = async (req, res) => {
       paymentMethod, 
       customerNotes, 
       shippingMethod = 'Standard',
-      vendorIds = []
+      vendorIds = [],
+      applyFreeShipping = false, // Add this parameter
+      discountCode = '' // Add discount code parameter
     } = req.body;
 
     // Validate required fields
@@ -195,7 +197,20 @@ const createOrder = async (req, res) => {
     // Calculate totals with proper rounding
     subtotal = parseFloat(subtotal.toFixed(2));
     const tax = parseFloat((subtotal * 0.16).toFixed(2));
-    const shipping = shippingMethod === 'Express' ? 1000 : 500;
+    
+    // NEW: Calculate shipping based on rules
+    let shipping = 0; // Default to free shipping
+    
+    // Only apply shipping fee if:
+    // 1. NOT applying free shipping AND
+    // 2. Subtotal is less than free shipping threshold
+    if (!applyFreeShipping && subtotal < 5000) {
+      shipping = shippingMethod === 'Express' ? 1000 : 500;
+    }
+    
+    // Alternative: Always free shipping (uncomment if you want)
+    // shipping = 0;
+    
     const totalAmount = parseFloat((subtotal + tax + shipping).toFixed(2));
 
     debugLog('Calculated totals:', {
@@ -203,6 +218,8 @@ const createOrder = async (req, res) => {
       tax,
       shipping,
       totalAmount,
+      freeShippingApplied: shipping === 0,
+      freeShippingThreshold: 5000,
       calculation: `subtotal(${subtotal}) + tax(${tax}) + shipping(${shipping}) = ${totalAmount}`
     });
 
@@ -239,18 +256,25 @@ const createOrder = async (req, res) => {
       shippingMethod,
       subtotal: subtotal,
       tax: tax,
-      shippingFee: shipping,
+      shippingFee: shipping, // Use calculated shipping (0 or amount)
       totalAmount: totalAmount,
       status: 'PENDING',
       paymentStatus: paymentMethod === 'CASH_ON_DELIVERY' ? 'PENDING' : 'PROCESSING',
       vendorIds: vendorIds.length > 0 ? vendorIds : [...new Set(orderItems.map(item => item.vendorId).filter(id => id))],
-      estimatedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      estimatedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      flags: {
+        freeShipping: shipping === 0, // Mark if free shipping was applied
+        discountApplied: false, // You can implement discount logic here
+        discountAmount: 0,
+        discountCode: discountCode || ''
+      }
     };
 
     debugLog('Creating order with data:', {
       ...orderData,
       itemsCount: orderData.items.length,
-      itemPrices: orderData.items.map(i => ({ title: i.title, price: i.price, quantity: i.quantity }))
+      itemPrices: orderData.items.map(i => ({ title: i.title, price: i.price, quantity: i.quantity })),
+      freeShipping: orderData.flags.freeShipping
     });
 
     // Create order
@@ -261,6 +285,8 @@ const createOrder = async (req, res) => {
       orderId: order.orderId,
       orderDbId: order._id,
       totalAmount: order.totalAmount,
+      shippingFee: order.shippingFee,
+      freeShipping: order.flags.freeShipping,
       status: order.status,
       paymentStatus: order.paymentStatus
     });
@@ -313,6 +339,7 @@ const createOrder = async (req, res) => {
         totalAmount: order.totalAmount,
         status: order.status,
         paymentStatus: order.paymentStatus,
+        freeShipping: order.flags.freeShipping,
         createdAt: order.createdAt,
         estimatedDelivery: order.estimatedDelivery
       },

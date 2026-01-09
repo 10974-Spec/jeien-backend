@@ -4,11 +4,15 @@ const getMpesaAccessToken = async () => {
   try {
     console.log('Getting M-Pesa access token...');
     
-    if (!process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET) {
+    // Use default sandbox credentials if not provided
+    const consumerKey = process.env.MPESA_CONSUMER_KEY || 'your_sandbox_consumer_key_here';
+    const consumerSecret = process.env.MPESA_CONSUMER_SECRET || 'your_sandbox_consumer_secret_here';
+    
+    if (!consumerKey || !consumerSecret) {
       throw new Error('M-Pesa credentials not configured');
     }
     
-    const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
+    const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
     
     const response = await axios.get('https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials', {
       headers: {
@@ -20,6 +24,12 @@ const getMpesaAccessToken = async () => {
     return response.data.access_token;
   } catch (error) {
     console.error('Failed to get M-Pesa access token:', error.response?.data || error.message);
+    
+    // Provide helpful error message
+    if (error.response?.status === 401) {
+      throw new Error('Invalid M-Pesa Consumer Key or Consumer Secret. Please check your credentials.');
+    }
+    
     throw error;
   }
 };
@@ -51,18 +61,18 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
     console.log(`Formatted phone: ${formattedPhone}`);
     
     const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-    const password = Buffer.from(`174379${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
     
-    // Use a valid callback URL
-    const callbackUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://yourdomain.com/api/payments/webhook'
-      : 'https://your-ngrok-url.ngrok.io/api/payments/webhook'; // For development
+    // Use default sandbox passkey if not provided
+    const passkey = process.env.MPESA_PASSKEY || 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919';
+    const password = Buffer.from(`174379${passkey}${timestamp}`).toString('base64');
     
-    // For development/testing, you can use a test callback URL
-    const testCallbackUrl = 'https://webhook.site/c0e8b7a4-1234-5678-90ab-cdef01234567'; // Replace with actual
+    console.log('Generated password (first 20 chars):', password.substring(0, 20) + '...');
+    
+    // For development/testing, use a test callback URL
+    const testCallbackUrl = 'https://webhook.site/c0e8b7a4-1234-5678-90ab-cdef01234567';
     
     const payload = {
-      BusinessShortCode: 174379, // Lipa Na M-Pesa Online Shortcode
+      BusinessShortCode: 174379, // Sandbox Lipa Na M-Pesa Online Shortcode
       Password: password,
       Timestamp: timestamp,
       TransactionType: 'CustomerPayBillOnline',
@@ -70,7 +80,7 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
       PartyA: formattedPhone,
       PartyB: 174379,
       PhoneNumber: formattedPhone,
-      CallBackURL: process.env.NODE_ENV === 'production' ? callbackUrl : testCallbackUrl,
+      CallBackURL: testCallbackUrl,
       AccountReference: reference.substring(0, 12), // Max 12 characters
       TransactionDesc: 'Ecommerce Purchase'
     };
@@ -122,7 +132,9 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
     }
     
     // Check for specific M-Pesa errors
-    if (errorMessage.includes('Invalid Access Token')) {
+    if (errorMessage.includes('Wrong credentials') || errorMessage.includes('500.001.1001')) {
+      errorMessage = 'Invalid M-Pesa API credentials. Please check your Consumer Key, Consumer Secret, and Passkey.';
+    } else if (errorMessage.includes('Invalid Access Token')) {
       errorMessage = 'M-Pesa authentication failed. Check your API credentials.';
     } else if (errorMessage.includes('The initiator information is invalid')) {
       errorMessage = 'Invalid business shortcode or credentials.';
@@ -142,6 +154,31 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
       details: error.response?.data
     };
   }
+};
+
+// ALTERNATIVE: Test payment function (for development without real credentials)
+const initiateTestMpesaPayment = async (phone, amount, reference) => {
+  console.log('=== TEST MODE: Simulating M-Pesa Payment ===');
+  console.log(`Phone: ${phone}, Amount: KES ${amount}, Reference: ${reference}`);
+  
+  // Simulate a successful payment for testing
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({
+        success: true,
+        data: {
+          MerchantRequestID: `TEST-${Date.now()}`,
+          CheckoutRequestID: `ws_CO_${Date.now()}`,
+          ResponseCode: '0',
+          ResponseDescription: 'Success. Request accepted for processing',
+          CustomerMessage: 'Success. Request accepted for processing'
+        },
+        checkoutRequestId: `ws_CO_${Date.now()}`,
+        merchantRequestId: `TEST-${Date.now()}`,
+        responseDescription: 'Test payment initiated successfully'
+      });
+    }, 1000);
+  });
 };
 
 const verifyPayPalPayment = async (paymentId) => {
@@ -171,30 +208,52 @@ const verifyPayPalPayment = async (paymentId) => {
 // Test function to validate M-Pesa setup
 const testMpesaConnection = async () => {
   try {
-    console.log('Testing M-Pesa connection...');
+    console.log('=== Testing M-Pesa Connection ===');
     
     // Check if credentials exist
     if (!process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET || !process.env.MPESA_PASSKEY) {
-      console.error('M-Pesa environment variables missing:');
-      console.error('MPESA_CONSUMER_KEY:', process.env.MPESA_CONSUMER_KEY ? 'Set' : 'Missing');
-      console.error('MPESA_CONSUMER_SECRET:', process.env.MPESA_CONSUMER_SECRET ? 'Set' : 'Missing');
-      console.error('MPESA_PASSKEY:', process.env.MPESA_PASSKEY ? 'Set' : 'Missing');
-      return { success: false, error: 'M-Pesa credentials not configured' };
+      console.warn('M-Pesa environment variables missing. Using sandbox defaults for testing.');
     }
     
-    // Test access token retrieval
-    const accessToken = await getMpesaAccessToken();
-    console.log('Access token test: SUCCESS');
+    console.log('Environment variables:');
+    console.log('- MPESA_CONSUMER_KEY:', process.env.MPESA_CONSUMER_KEY ? '✓ Set' : '✗ Missing (using default)');
+    console.log('- MPESA_CONSUMER_SECRET:', process.env.MPESA_CONSUMER_SECRET ? '✓ Set' : '✗ Missing (using default)');
+    console.log('- MPESA_PASSKEY:', process.env.MPESA_PASSKEY ? '✓ Set' : '✗ Missing (using sandbox default)');
     
-    return { 
-      success: true, 
-      message: 'M-Pesa connection successful',
-      credentials: {
-        consumerKey: process.env.MPESA_CONSUMER_KEY ? 'Set' : 'Missing',
-        consumerSecret: process.env.MPESA_CONSUMER_SECRET ? 'Set' : 'Missing',
-        passkey: process.env.MPESA_PASSKEY ? 'Set' : 'Missing'
+    // Test access token retrieval
+    try {
+      const accessToken = await getMpesaAccessToken();
+      console.log('✓ Access token test: SUCCESS');
+      console.log('  Access Token (first 20 chars):', accessToken.substring(0, 20) + '...');
+      
+      return { 
+        success: true, 
+        message: 'M-Pesa connection successful',
+        hasCredentials: !!(process.env.MPESA_CONSUMER_KEY && process.env.MPESA_CONSUMER_SECRET)
+      };
+      
+    } catch (tokenError) {
+      console.error('✗ Access token test failed:', tokenError.message);
+      
+      if (tokenError.message.includes('Invalid M-Pesa Consumer Key')) {
+        console.log('\n=== HOW TO GET M-PESA CREDENTIALS ===');
+        console.log('1. Go to: https://developer.safaricom.co.ke/');
+        console.log('2. Register for a developer account');
+        console.log('3. Login and go to "My Applications"');
+        console.log('4. Create a new application or use existing');
+        console.log('5. Copy the Consumer Key and Consumer Secret');
+        console.log('6. Add to your .env file:');
+        console.log('   MPESA_CONSUMER_KEY=your_actual_key_here');
+        console.log('   MPESA_CONSUMER_SECRET=your_actual_secret_here');
+        console.log('   MPESA_PASSKEY=bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919');
       }
-    };
+      
+      return { 
+        success: false, 
+        error: tokenError.message,
+        suggestion: 'Use test payment mode for development or get real credentials from Safaricom'
+      };
+    }
     
   } catch (error) {
     console.error('M-Pesa connection test failed:', error.message);
@@ -204,6 +263,7 @@ const testMpesaConnection = async () => {
 
 module.exports = { 
   initiateMpesaPayment, 
+  initiateTestMpesaPayment,  // Export test function
   verifyPayPalPayment,
   testMpesaConnection
 };

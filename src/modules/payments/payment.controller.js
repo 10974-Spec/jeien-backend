@@ -1,18 +1,18 @@
 const Order = require('../orders/order.model');
 const Vendor = require('../vendors/vendor.model');
-const { initiateMpesaPayment, verifyPayPalPayment } = require('../../config/payment');
-const { processOrderCommission } = require('../../utils/commission.util');
+const { initiateMpesaPayment, initiateTestMpesaPayment, verifyPayPalPayment } = require('../../config/payment');
 
 const processMpesaPayment = async (req, res) => {
   try {
     const { orderId, phone, amount } = req.body;
     const userId = req.user.id;
 
-    console.log('MPesa payment request:', { orderId, phone, amount, userId });
+    console.log('M-Pesa payment request:', { orderId, phone, amount, userId });
 
     // Validate required fields
     if (!orderId || !phone || !amount) {
       return res.status(400).json({ 
+        success: false,
         message: 'Missing required fields', 
         required: ['orderId', 'phone', 'amount'] 
       });
@@ -26,6 +26,7 @@ const processMpesaPayment = async (req, res) => {
 
     if (!order) {
       return res.status(404).json({ 
+        success: false,
         message: 'Order not found or already processed',
         details: 'Check order ID and ensure payment is still pending'
       });
@@ -41,9 +42,21 @@ const processMpesaPayment = async (req, res) => {
       difference: Math.abs(orderAmount - requestAmount)
     });
 
+    // Validate amount - M-Pesa has limits
+    if (orderAmount > 150000) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Order amount exceeds M-Pesa limit',
+        orderAmount: orderAmount,
+        maxAmount: 150000,
+        suggestion: 'Please split your order or use another payment method'
+      });
+    }
+
     // Use a more flexible comparison for floating point numbers
     if (Math.abs(orderAmount - requestAmount) > 1) { // Changed from 0.01 to 1 for KES
       return res.status(400).json({ 
+        success: false,
         message: 'Amount does not match order total',
         orderAmount: orderAmount,
         requestAmount: requestAmount,
@@ -53,6 +66,7 @@ const processMpesaPayment = async (req, res) => {
 
     if (!phone || phone.length < 10) {
       return res.status(400).json({ 
+        success: false,
         message: 'Valid phone number is required',
         phoneProvided: phone 
       });
@@ -74,6 +88,7 @@ const processMpesaPayment = async (req, res) => {
     mpesaPhone = mpesaPhone.replace(/\D/g, '');
     if (mpesaPhone.length !== 12) {
       return res.status(400).json({ 
+        success: false,
         message: 'Invalid phone number format',
         formattedPhone: mpesaPhone 
       });
@@ -88,11 +103,24 @@ const processMpesaPayment = async (req, res) => {
     // FIX: Use Math.round for M-Pesa (requires integer amounts)
     const mpesaAmount = Math.round(orderAmount);
     
-    const paymentResult = await initiateMpesaPayment(
-      mpesaPhone,
-      mpesaAmount, // Use rounded amount
-      order.orderId
-    );
+    // FIX: Use test mode in development if credentials are missing
+    let paymentResult;
+    if (process.env.NODE_ENV === 'development' && 
+        (!process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET)) {
+      console.log('Using test payment mode (no M-Pesa credentials found)');
+      paymentResult = await initiateTestMpesaPayment(
+        mpesaPhone,
+        mpesaAmount,
+        order.orderId
+      );
+    } else {
+      // Use real M-Pesa payment
+      paymentResult = await initiateMpesaPayment(
+        mpesaPhone,
+        mpesaAmount,
+        order.orderId
+      );
+    }
 
     console.log('M-Pesa payment result:', paymentResult);
 
@@ -125,11 +153,12 @@ const processMpesaPayment = async (req, res) => {
       phoneNumber: mpesaPhone,
       initiatedAt: new Date(),
       amountRequested: orderAmount,
-      amountSent: mpesaAmount
+      amountSent: mpesaAmount,
+      isTestMode: !(process.env.MPESA_CONSUMER_KEY && process.env.MPESA_CONSUMER_SECRET)
     };
     await order.save();
 
-    res.status(200).json({
+    const response = {
       success: true,
       message: 'M-Pesa payment initiated successfully',
       checkoutRequestId: paymentResult.data?.CheckoutRequestID || paymentResult.checkoutRequestId,
@@ -144,7 +173,15 @@ const processMpesaPayment = async (req, res) => {
       },
       instruction: 'Check your phone for STK Push notification',
       note: 'Enter your M-Pesa PIN when prompted on your phone'
-    });
+    };
+
+    // Add test mode indicator if using test mode
+    if (!process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET) {
+      response.testMode = true;
+      response.testNote = 'Using test mode. No actual payment will be processed.';
+    }
+
+    res.status(200).json(response);
 
   } catch (error) {
     console.error('M-Pesa payment error details:', {
@@ -169,6 +206,7 @@ const processPayPalPayment = async (req, res) => {
 
     if (!orderId || !paymentId) {
       return res.status(400).json({ 
+        success: false,
         message: 'Missing required fields',
         required: ['orderId', 'paymentId'] 
       });
@@ -182,6 +220,7 @@ const processPayPalPayment = async (req, res) => {
 
     if (!order) {
       return res.status(404).json({ 
+        success: false,
         message: 'Order not found or already processed' 
       });
     }
@@ -192,6 +231,7 @@ const processPayPalPayment = async (req, res) => {
 
     if (!paymentResult || paymentResult.status !== 'COMPLETED') {
       return res.status(400).json({ 
+        success: false,
         message: 'PayPal payment verification failed',
         details: paymentResult 
       });
@@ -202,6 +242,7 @@ const processPayPalPayment = async (req, res) => {
 
     if (Math.abs(orderAmount - amount) > 1) {
       return res.status(400).json({ 
+        success: false,
         message: 'Amount does not match order total',
         orderAmount: orderAmount,
         paymentAmount: amount 
@@ -221,7 +262,8 @@ const processPayPalPayment = async (req, res) => {
     };
     await order.save();
 
-    await processVendorPayout(order);
+    // Process vendor payout (simulated for now)
+    await simulateVendorPayout(order);
 
     res.status(200).json({
       success: true,
@@ -258,6 +300,7 @@ const processCardPayment = async (req, res) => {
 
     if (!orderId || !token || !amount) {
       return res.status(400).json({ 
+        success: false,
         message: 'Missing required fields',
         required: ['orderId', 'token', 'amount'] 
       });
@@ -271,6 +314,7 @@ const processCardPayment = async (req, res) => {
 
     if (!order) {
       return res.status(404).json({ 
+        success: false,
         message: 'Order not found or already processed' 
       });
     }
@@ -280,6 +324,7 @@ const processCardPayment = async (req, res) => {
 
     if (Math.abs(orderAmount - requestAmount) > 1) {
       return res.status(400).json({ 
+        success: false,
         message: 'Amount does not match order total',
         orderAmount: orderAmount,
         requestAmount: requestAmount 
@@ -297,11 +342,13 @@ const processCardPayment = async (req, res) => {
       paidAt: new Date(),
       currency,
       token: token.substring(0, 10) + '...',
-      notes: 'Card payment processed successfully'
+      notes: 'Card payment processed successfully',
+      isTestMode: true // Card payments are in test mode
     };
     await order.save();
 
-    await processVendorPayout(order);
+    // Process vendor payout (simulated for now)
+    await simulateVendorPayout(order);
 
     res.status(200).json({
       success: true,
@@ -331,57 +378,34 @@ const processCardPayment = async (req, res) => {
   }
 };
 
-const processVendorPayout = async (order) => {
+const simulateVendorPayout = async (order) => {
   try {
-    const vendor = await Vendor.findById(order.vendor);
-    if (!vendor || !vendor.bankDetails) {
-      console.error('Vendor not found or no bank details:', order.vendor);
-      return;
-    }
+    console.log(`[SIMULATED] Processing vendor payout for order ${order.orderId}`);
+    
+    // Simulate vendor payout for development
+    const payoutData = {
+      orderId: order.orderId,
+      amount: order.totalAmount,
+      timestamp: new Date().toISOString(),
+      status: 'SIMULATED',
+      transactionId: `SIM-PAYOUT-${Date.now()}`,
+      note: 'Vendor payout simulated for development'
+    };
 
-    const { bankDetails } = vendor;
-    const payoutAmount = order.vendorAmount || order.totalAmount;
-
-    console.log(`Processing payout for vendor ${vendor._id}:`, {
-      vendorName: vendor.businessName,
-      amount: payoutAmount,
-      bankProvider: bankDetails.provider,
-      orderId: order.orderId
-    });
-
-    let payoutResult;
-    if (bankDetails.provider === 'MPESA' && bankDetails.phoneNumber) {
-      payoutResult = await processMpesaPayout(bankDetails.phoneNumber, payoutAmount, order.orderId);
-    } else if (bankDetails.provider === 'BANK' && bankDetails.accountNumber) {
-      payoutResult = await processBankTransfer(bankDetails, payoutAmount, order.orderId);
-    } else if (bankDetails.provider === 'PAYPAL' && bankDetails.accountNumber) {
-      payoutResult = await processPayPalPayout(bankDetails.accountNumber, payoutAmount, order.orderId);
-    }
-
-    await Vendor.findByIdAndUpdate(vendor._id, {
-      $inc: { 
-        'stats.totalRevenue': order.totalAmount,
-        'stats.completedOrders': 1,
-        'performance.lastMonthSales': 1 
-      },
-      $set: {
-        'stats.lastPayoutDate': new Date(),
-        'stats.lastPayoutAmount': payoutAmount
-      }
-    });
-
-    console.log(`Payout processed successfully for order ${order.orderId}:`, payoutResult);
-    return payoutResult;
+    console.log('Simulated vendor payout:', payoutData);
+    
+    return { success: true, data: payoutData };
 
   } catch (error) {
-    console.error('Vendor payout error:', error);
-    throw error;
+    console.error('Vendor payout simulation error:', error);
+    // Don't throw error for simulation
+    return { success: false, error: error.message };
   }
 };
 
 const processMpesaPayout = async (phone, amount, reference) => {
   try {
-    console.log(`Initiating MPesa payout: ${phone} - ${amount} KES - Ref: ${reference}`);
+    console.log(`Initiating M-Pesa payout: ${phone} - ${amount} KES - Ref: ${reference}`);
     
     const mpesaPhone = phone.startsWith('0') ? `254${phone.substring(1)}` : 
                       phone.startsWith('+254') ? phone.substring(1) : 
@@ -396,11 +420,11 @@ const processMpesaPayout = async (phone, amount, reference) => {
       transactionId: `PAYOUT-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
     };
 
-    console.log('MPesa payout initiated:', payoutData);
+    console.log('M-Pesa payout initiated:', payoutData);
     
     return { success: true, data: payoutData };
   } catch (error) {
-    console.error('MPesa payout error:', error);
+    console.error('M-Pesa payout error:', error);
     throw error;
   }
 };
@@ -490,24 +514,62 @@ const handlePaymentWebhook = async (req, res) => {
 
 const handleMpesaWebhook = async (data) => {
   try {
+    console.log('Handling M-Pesa webhook (simulated):', data);
+
+    // For development, simulate successful payment
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[DEV] Simulating M-Pesa payment completion');
+      
+      // Try to find order by reference in AccountReference
+      const reference = data?.Body?.stkCallback?.CheckoutRequestID || 
+                       data?.AccountReference || 
+                       `ORD-${Date.now()}`;
+      
+      const order = await Order.findOne({ 
+        $or: [
+          { 'paymentDetails.transactionId': reference },
+          { orderId: { $regex: reference, $options: 'i' } }
+        ]
+      });
+
+      if (order) {
+        order.paymentStatus = 'COMPLETED';
+        order.status = 'PROCESSING';
+        order.paymentDetails.paidAt = new Date();
+        order.paymentDetails.notes = 'M-Pesa payment completed via webhook (simulated)';
+        order.paymentDetails.mpesaReceiptNumber = `MPESA${Date.now()}`;
+        order.paymentDetails.amountPaid = order.totalAmount;
+        
+        await order.save();
+        
+        console.log(`Order ${order.orderId} marked as COMPLETED via simulated webhook`);
+        
+        // Simulate vendor payout
+        await simulateVendorPayout(order);
+      }
+      
+      return;
+    }
+
+    // Real M-Pesa webhook handling (for production)
     const { Body } = data;
     const stkCallback = Body?.stkCallback;
 
     if (!stkCallback) {
-      console.error('Invalid MPesa webhook data structure:', data);
+      console.error('Invalid M-Pesa webhook data structure:', data);
       return;
     }
 
     const { CheckoutRequestID, ResultCode, ResultDesc, CallbackMetadata } = stkCallback;
     
-    console.log(`MPesa webhook processing:`, {
+    console.log(`M-Pesa webhook processing:`, {
       CheckoutRequestID,
       ResultCode,
       ResultDesc
     });
 
     if (ResultCode !== 0) {
-      console.error(`MPesa payment failed: ${ResultDesc}`, { 
+      console.error(`M-Pesa payment failed: ${ResultDesc}`, { 
         CheckoutRequestID, 
         ResultCode,
         ResultDesc 
@@ -519,7 +581,7 @@ const handleMpesaWebhook = async (data) => {
       
       if (order) {
         order.paymentStatus = 'FAILED';
-        order.paymentDetails.notes = `MPesa payment failed: ${ResultDesc}`;
+        order.paymentDetails.notes = `M-Pesa payment failed: ${ResultDesc}`;
         order.paymentDetails.errorCode = ResultCode;
         order.paymentDetails.errorDescription = ResultDesc;
         await order.save();
@@ -542,7 +604,7 @@ const handleMpesaWebhook = async (data) => {
     });
 
     if (!order) {
-      console.error(`Order not found for MPesa transaction: ${CheckoutRequestID}`);
+      console.error(`Order not found for M-Pesa transaction: ${CheckoutRequestID}`);
       return;
     }
 
@@ -553,21 +615,21 @@ const handleMpesaWebhook = async (data) => {
     order.paymentDetails.mpesaReceiptNumber = metadata.MpesaReceiptNumber;
     order.paymentDetails.phoneNumber = metadata.PhoneNumber;
     order.paymentDetails.amountPaid = metadata.Amount;
-    order.paymentDetails.notes = `MPesa payment completed successfully`;
+    order.paymentDetails.notes = `M-Pesa payment completed successfully`;
 
     await order.save();
 
-    await processVendorPayout(order);
+    await simulateVendorPayout(order);
 
-    console.log(`MPesa payment completed for order ${order.orderId}:`, {
+    console.log(`M-Pesa payment completed for order ${order.orderId}:`, {
       receipt: metadata.MpesaReceiptNumber,
       amount: metadata.Amount,
       phone: metadata.PhoneNumber
     });
 
   } catch (error) {
-    console.error('MPesa webhook processing error:', error);
-    throw error;
+    console.error('M-Pesa webhook processing error:', error);
+    // Don't throw error to prevent webhook retries
   }
 };
 
@@ -602,13 +664,13 @@ const handlePayPalWebhook = async (data) => {
 
       await order.save();
 
-      await processVendorPayout(order);
+      await simulateVendorPayout(order);
 
       console.log(`PayPal payment completed for order ${order.orderId}`);
     }
   } catch (error) {
     console.error('PayPal webhook processing error:', error);
-    throw error;
+    // Don't throw error to prevent webhook retries
   }
 };
 
@@ -654,12 +716,12 @@ const handleStripeWebhook = async (data) => {
     };
     await order.save();
 
-    await processVendorPayout(order);
+    await simulateVendorPayout(order);
 
     console.log(`Stripe payment completed for order ${order.orderId}`);
   } catch (error) {
     console.error('Stripe webhook processing error:', error);
-    throw error;
+    // Don't throw error to prevent webhook retries
   }
 };
 
@@ -736,7 +798,8 @@ const getPaymentMethods = async (req, res) => {
       success: true,
       methods: filteredMethods,
       defaultCurrency: userCurrency,
-      userCountry: userCountry
+      userCountry: userCountry,
+      testMode: !process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET
     });
 
   } catch (error) {
@@ -765,7 +828,7 @@ const getPaymentStatus = async (req, res) => {
     const order = await Order.findOne({ 
       $or: [{ _id: orderId }, { orderId: orderId }]
     })
-    .select('orderId paymentStatus status paymentDetails totalAmount createdAt buyer vendor');
+    .select('orderId paymentStatus status paymentDetails totalAmount createdAt buyer vendorIds');
 
     if (!order) {
       return res.status(404).json({ 
@@ -776,7 +839,7 @@ const getPaymentStatus = async (req, res) => {
 
     const isAuthorized = userRole === 'ADMIN' || 
                         order.buyer.toString() === userId || 
-                        order.vendor.toString() === userId;
+                        (order.vendorIds && order.vendorIds.some(vendorId => vendorId.toString() === userId));
 
     if (!isAuthorized) {
       return res.status(403).json({ 
@@ -796,10 +859,11 @@ const getPaymentStatus = async (req, res) => {
       paidAt: order.paymentDetails?.paidAt,
       receiptUrl: order.paymentDetails?.receiptUrl,
       provider: order.paymentDetails?.provider,
-      createdAt: order.createdAt
+      createdAt: order.createdAt,
+      isTestMode: order.paymentDetails?.isTestMode || false
     };
 
-    if (userRole === 'ADMIN' || order.vendor.toString() === userId) {
+    if (userRole === 'ADMIN' || (order.vendorIds && order.vendorIds.some(vendorId => vendorId.toString() === userId))) {
       response.paymentDetails = order.paymentDetails;
       response.buyer = order.buyer;
     }
@@ -816,9 +880,57 @@ const getPaymentStatus = async (req, res) => {
   }
 };
 
+
+// Add this helper function
+const simulateTestPaymentCompletion = async (orderId) => {
+  try {
+    const order = await Order.findById(orderId);
+    if (!order) {
+      console.error(`Order ${orderId} not found for test completion`);
+      return false;
+    }
+
+    // Check if this is a test payment
+    if (order.paymentDetails?.isTestMode || 
+        !process.env.MPESA_CONSUMER_KEY || 
+        !process.env.MPESA_CONSUMER_SECRET) {
+      
+      console.log(`Completing test payment for order ${order.orderId}`);
+      
+      order.paymentStatus = 'COMPLETED';
+      order.status = 'PROCESSING';
+      order.paymentDetails = order.paymentDetails || {};
+      order.paymentDetails.paidAt = new Date();
+      order.paymentDetails.isTestMode = true;
+      order.paymentDetails.notes = 'Test payment completed automatically';
+      order.paymentDetails.transactionId = order.paymentDetails.transactionId || `TEST-${Date.now()}`;
+      order.paymentDetails.receiptUrl = `#test-receipt-${Date.now()}`;
+      
+      await order.save();
+      
+      console.log(`Test payment completed for order ${order.orderId}`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Error completing test payment:', error);
+    return false;
+  }
+};
+
+// Update the testMpesaPayment function:
 const testMpesaPayment = async (req, res) => {
   try {
-    const { phone, amount } = req.body;
+    const { orderId, phone, amount } = req.body;
+
+    if (!orderId || !phone || !amount) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Missing required fields',
+        required: ['orderId', 'phone', 'amount']
+      });
+    }
 
     const testTransaction = {
       success: true,
@@ -828,9 +940,42 @@ const testMpesaPayment = async (req, res) => {
       responseDescription: 'Success. Request accepted for processing',
       phone: phone,
       amount: amount,
+      orderId: orderId,
       instruction: 'In test mode, simulate entering PIN 123456 on your phone',
-      note: 'This is a test transaction. No actual money will be deducted.'
+      note: 'This is a test transaction. No actual money will be deducted.',
+      testMode: true,
+      // ADD THIS: Tell frontend to mark as completed immediately
+      shouldCompleteImmediately: true,
+      simulatedCompletion: true
     };
+
+    // Update order payment status in test mode
+    try {
+      const order = await Order.findById(orderId);
+      if (order) {
+        order.paymentStatus = 'COMPLETED'; // Mark as COMPLETED immediately for test
+        order.status = 'PROCESSING';
+        order.paymentDetails = {
+          transactionId: `TEST-${Date.now()}`,
+          reference: order.orderId,
+          provider: 'MPESA',
+          initiatedAt: new Date(),
+          paidAt: new Date(), // Add paidAt immediately
+          currency: 'KES',
+          phoneNumber: phone,
+          amountRequested: amount,
+          amountPaid: amount,
+          isTestMode: true,
+          notes: 'Test payment completed immediately',
+          receiptUrl: `#test-receipt-${Date.now()}`
+        };
+        await order.save();
+        
+        console.log(`Test order ${order.orderId} marked as COMPLETED immediately`);
+      }
+    } catch (orderError) {
+      console.error('Could not update order for test payment:', orderError);
+    }
 
     res.status(200).json(testTransaction);
   } catch (error) {
@@ -842,6 +987,65 @@ const testMpesaPayment = async (req, res) => {
     });
   }
 };
+
+// const testMpesaPayment = async (req, res) => {
+//   try {
+//     const { orderId, phone, amount } = req.body;
+
+//     if (!orderId || !phone || !amount) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'Missing required fields',
+//         required: ['orderId', 'phone', 'amount']
+//       });
+//     }
+
+//     const testTransaction = {
+//       success: true,
+//       message: 'Test M-Pesa STK Push sent successfully',
+//       checkoutRequestId: `TEST-${Date.now()}`,
+//       merchantRequestId: `TEST-MERCHANT-${Date.now()}`,
+//       responseDescription: 'Success. Request accepted for processing',
+//       phone: phone,
+//       amount: amount,
+//       orderId: orderId,
+//       instruction: 'In test mode, simulate entering PIN 123456 on your phone',
+//       note: 'This is a test transaction. No actual money will be deducted.',
+//       testMode: true
+//     };
+
+//     // Update order payment status in test mode
+//     try {
+//       const order = await Order.findById(orderId);
+//       if (order) {
+//         order.paymentStatus = 'PROCESSING';
+//         order.paymentDetails = {
+//           transactionId: `TEST-${Date.now()}`,
+//           reference: order.orderId,
+//           provider: 'MPESA',
+//           initiatedAt: new Date(),
+//           currency: 'KES',
+//           phoneNumber: phone,
+//           amountRequested: amount,
+//           isTestMode: true,
+//           notes: 'Test payment initiated'
+//         };
+//         await order.save();
+//       }
+//     } catch (orderError) {
+//       console.error('Could not update order for test payment:', orderError);
+//     }
+
+//     res.status(200).json(testTransaction);
+//   } catch (error) {
+//     console.error('Test M-Pesa error:', error);
+//     res.status(500).json({ 
+//       success: false,
+//       message: 'Test payment failed', 
+//       error: error.message 
+//     });
+//   }
+// };
 
 module.exports = {
   processMpesaPayment,

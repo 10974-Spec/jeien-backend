@@ -122,7 +122,7 @@ const OrderSchema = new mongoose.Schema({
   },
   shippingFee: {
     type: Number,
-    required: true,
+    default: 0, // Changed from required to default 0
     min: [0, 'Shipping fee cannot be negative']
   },
   totalAmount: {
@@ -180,10 +180,30 @@ const OrderSchema = new mongoose.Schema({
     phoneNumber: String,
     amountPaid: Number,
     errorCode: String,
-    errorDescription: String
+    errorDescription: String,
+    isTestMode: {  // Added this field for test payments
+      type: Boolean,
+      default: false
+    }
   },
   estimatedDelivery: {
     type: Date
+  },
+  // Add flags for special handling
+  flags: {
+    freeShipping: {
+      type: Boolean,
+      default: false
+    },
+    discountApplied: {
+      type: Boolean,
+      default: false
+    },
+    discountAmount: {
+      type: Number,
+      default: 0
+    },
+    discountCode: String
   }
 }, {
   timestamps: true,
@@ -220,6 +240,12 @@ OrderSchema.pre('save', function(next) {
     this.estimatedDelivery = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   }
   
+  // Set free shipping if subtotal is above certain threshold (e.g., 5000)
+  if (this.subtotal >= 5000 && !this.flags.freeShipping) {
+    this.flags.freeShipping = true;
+    this.shippingFee = 0;
+  }
+  
   next();
 });
 
@@ -228,6 +254,12 @@ OrderSchema.pre('validate', function(next) {
   // Instead, we'll calculate the total if it's not set
   if (!this.totalAmount && this.subtotal !== undefined) {
     this.totalAmount = this.subtotal + (this.tax || 0) + (this.shippingFee || 0);
+  }
+  
+  // Apply discount if any
+  if (this.flags.discountAmount > 0) {
+    this.totalAmount = this.totalAmount - this.flags.discountAmount;
+    if (this.totalAmount < 0) this.totalAmount = 0;
   }
   
   // Round to 2 decimal places to avoid floating point precision issues
