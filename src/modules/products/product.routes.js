@@ -2,7 +2,28 @@ const express = require('express');
 const router = express.Router();
 const authenticate = require('../../middlewares/auth.middleware');
 const { vendorOrAdmin, adminOnly } = require('../../middlewares/role.middleware');
-const { multipleUpload, debugMulter } = require('../../config/multer'); // Use fixed multer
+const { multipleUpload } = require('../../config/multer');
+const rateLimit = require('express-rate-limit');
+
+// Rate limiting middleware
+const updateRateLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 10, // limit each IP to 10 requests per windowMs
+  message: { 
+    success: false,
+    message: 'Too many update requests, please try again later' 
+  }
+});
+
+const createRateLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 5, // limit each IP to 5 requests per windowMs
+  message: { 
+    success: false,
+    message: 'Too many create requests, please try again later' 
+  }
+});
+
 const {
   createProduct,
   getAllProducts,
@@ -15,12 +36,12 @@ const {
   searchProducts
 } = require('./product.controller');
 
-// Add debug middleware for uploads
-router.post('/', authenticate, vendorOrAdmin, debugMulter, multipleUpload, createProduct);
+// Apply rate limiting
+router.post('/', authenticate, vendorOrAdmin, createRateLimiter, multipleUpload, createProduct);
 router.get('/', getAllProducts);
 router.get('/search', searchProducts);
 router.get('/:id', getProductById);
-router.put('/:id', authenticate, vendorOrAdmin, multipleUpload, updateProduct);
+router.put('/:id', authenticate, vendorOrAdmin, updateRateLimiter, multipleUpload, updateProduct);
 router.delete('/:id', authenticate, vendorOrAdmin, deleteProduct);
 
 router.get('/vendor/my', authenticate, vendorOrAdmin, getVendorProducts);

@@ -13,15 +13,21 @@ const debugLog = (message, data = null) => {
 };
 // ============================================
 
-// CREATE CATEGORY
+// CREATE CATEGORY - FIXED VERSION
 const createCategory = async (req, res) => {
   debugLog('=== CREATE CATEGORY STARTED ===');
   debugLog('Request body:', req.body);
-  debugLog('Request file:', req.file ? req.file.originalname : 'No file');
+  debugLog('Request file:', req.file ? {
+    fieldname: req.file.fieldname,
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+    bufferLength: req.file.buffer?.length || 0
+  } : 'No file');
   debugLog('Request user:', req.user);
 
   try {
-    const { name, description, parent, commissionRate, featured, sortOrder, seo, filters } = req.body;
+    const { name, description, parent, commissionRate, featured, sortOrder, seo, filters, active } = req.body;
 
     // Validate required fields
     if (!name || name.trim().length < 2) {
@@ -42,12 +48,17 @@ const createCategory = async (req, res) => {
     
     debugLog('Generated slug:', generatedSlug);
 
-    // Check for existing category
+    // Check for existing category - FIXED: Use case-insensitive comparison
     debugLog('Checking for existing category with same name or slug...');
+    
+    // Create a regex for case-insensitive search
+    const nameRegex = new RegExp(`^${trimmedName}$`, 'i');
+    const slugRegex = new RegExp(`^${generatedSlug}$`, 'i');
+    
     const existingCategory = await Category.findOne({
       $or: [
-        { name: trimmedName },
-        { slug: generatedSlug }
+        { name: { $regex: nameRegex } },
+        { slug: { $regex: slugRegex } }
       ]
     });
 
@@ -95,14 +106,15 @@ const createCategory = async (req, res) => {
       });
     }
 
-    // Prepare category data
+    // Prepare category data - FIXED: Include active field
     const categoryData = {
       name: trimmedName,
       description: description?.trim() || '',
       parent: parentId,
       commissionRate: commissionRate ? parseFloat(commissionRate) : parseFloat(process.env.DEFAULT_COMMISSION_RATE || 10),
       featured: featured === 'true' || featured === true,
-      sortOrder: sortOrder ? parseInt(sortOrder) : 0
+      sortOrder: sortOrder ? parseInt(sortOrder) : 0,
+      active: active !== undefined ? (active === 'true' || active === true) : true
     };
 
     debugLog('Category data prepared:', categoryData);
@@ -140,11 +152,24 @@ const createCategory = async (req, res) => {
     if (req.file) {
       debugLog('Uploading category image...');
       try {
-        category.image = await uploadSingleImage(req.file, 'categories');
-        debugLog('Image uploaded successfully:', category.image);
+        // Validate the file first
+        if (!req.file.buffer || req.file.buffer.length === 0) {
+          debugLog('ERROR: File buffer is empty');
+          return res.status(400).json({ message: 'Uploaded file is empty' });
+        }
+        
+        debugLog('Calling uploadSingleImage...');
+        const imageUrl = await uploadSingleImage(req.file, 'categories');
+        debugLog('Image uploaded successfully:', imageUrl);
+        category.image = imageUrl;
       } catch (uploadError) {
         debugLog('ERROR uploading image:', uploadError.message);
-        return res.status(400).json({ message: 'Failed to upload image', error: uploadError.message });
+        debugLog('ERROR stack:', uploadError.stack);
+        return res.status(400).json({ 
+          message: 'Failed to upload image', 
+          error: uploadError.message,
+          details: process.env.NODE_ENV === 'development' ? uploadError.stack : undefined
+        });
       }
     }
 
@@ -155,7 +180,8 @@ const createCategory = async (req, res) => {
       id: category._id,
       name: category.name,
       slug: category.slug,
-      parent: category.parent
+      parent: category.parent,
+      image: category.image
     });
 
     debugLog('=== CREATE CATEGORY COMPLETED SUCCESSFULLY ===');
@@ -431,7 +457,13 @@ const updateCategory = async (req, res) => {
   debugLog('=== UPDATE CATEGORY ===');
   debugLog('Category ID:', req.params.id);
   debugLog('Updates:', req.body);
-  debugLog('Request file:', req.file ? req.file.originalname : 'No file');
+  debugLog('Request file:', req.file ? {
+    fieldname: req.file.fieldname,
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+    bufferLength: req.file.buffer?.length || 0
+  } : 'No file');
   debugLog('Request user:', req.user);
 
   try {
@@ -502,11 +534,24 @@ const updateCategory = async (req, res) => {
     if (req.file) {
       debugLog('Uploading new category image...');
       try {
-        category.image = await uploadSingleImage(req.file, 'categories');
-        debugLog('New image uploaded:', category.image);
+        // Validate the file first
+        if (!req.file.buffer || req.file.buffer.length === 0) {
+          debugLog('ERROR: File buffer is empty');
+          return res.status(400).json({ message: 'Uploaded file is empty' });
+        }
+        
+        debugLog('Calling uploadSingleImage...');
+        const imageUrl = await uploadSingleImage(req.file, 'categories');
+        debugLog('New image uploaded:', imageUrl);
+        category.image = imageUrl;
       } catch (uploadError) {
         debugLog('ERROR uploading image:', uploadError.message);
-        return res.status(400).json({ message: 'Failed to upload image', error: uploadError.message });
+        debugLog('ERROR stack:', uploadError.stack);
+        return res.status(400).json({ 
+          message: 'Failed to upload image', 
+          error: uploadError.message,
+          details: process.env.NODE_ENV === 'development' ? uploadError.stack : undefined
+        });
       }
     } else if (updates.removeImage === 'true') {
       debugLog('Removing category image as requested');
@@ -788,12 +833,11 @@ const getFeaturedCategories = async (req, res) => {
     debugLog('Finding featured categories...');
     const categories = await Category.find({
       featured: true,
-      active: true,
-      image: { $ne: null }
+      active: true
     })
       .sort({ sortOrder: 1, name: 1 })
-      .limit(10)
-      .select('name slug image description stats');
+      .limit(20)
+      .select('name slug image description stats parent children');
 
     debugLog(`Found ${categories.length} featured categories`);
 
@@ -822,7 +866,8 @@ const getFeaturedCategories = async (req, res) => {
 
     debugLog('Featured categories with counts:', categoriesWithCounts.map(c => ({
       name: c.name,
-      products: c.stats.totalProducts
+      products: c.stats.totalProducts,
+      hasImage: !!c.image
     })));
 
     res.json(categoriesWithCounts);

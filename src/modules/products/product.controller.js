@@ -46,7 +46,7 @@ const createProduct = async (req, res) => {
       return res.status(403).json({ message: 'Vendor account is not active' });
     }
 
-    const { title, description, price, stock, category, attributes, specifications, tags, shipping, variants } = req.body;
+    const { title, description, price, stock, category, attributes, specifications, tags, shipping, variants, sku, comparePrice } = req.body;
 
     // Debug all received fields
     debugLog('Product data received:', {
@@ -55,6 +55,8 @@ const createProduct = async (req, res) => {
       price,
       stock,
       category,
+      sku,
+      comparePrice,
       hasAttributes: !!attributes,
       hasSpecifications: !!specifications,
       hasTags: !!tags,
@@ -152,17 +154,23 @@ const createProduct = async (req, res) => {
       tags: tags ? JSON.parse(tags).map(tag => tag.trim().toLowerCase()) : []
     };
 
+    // Add optional fields if they exist
+    if (sku && sku.trim()) {
+      productData.sku = sku.trim().toUpperCase();
+      debugLog('SKU set:', productData.sku);
+    }
+    
+    if (comparePrice && comparePrice.trim()) {
+      productData.comparePrice = validatePrice(comparePrice);
+      debugLog('Compare price set:', productData.comparePrice);
+    }
+
     debugLog('Base product data prepared:', {
       ...productData,
       description: productData.description.substring(0, 100) + (productData.description.length > 100 ? '...' : '')
     });
 
     // Optional fields
-    if (req.body.comparePrice) {
-      productData.comparePrice = validatePrice(req.body.comparePrice);
-      debugLog('Compare price set:', productData.comparePrice);
-    }
-
     if (req.body.costPrice) {
       productData.costPrice = validatePrice(req.body.costPrice);
       debugLog('Cost price set:', productData.costPrice);
@@ -178,23 +186,26 @@ const createProduct = async (req, res) => {
       debugLog('Brand set:', productData.brand);
     }
 
-    if (req.body.sku) {
-      productData.sku = req.body.sku.trim().toUpperCase();
-      debugLog('SKU set:', productData.sku);
-    }
-
     if (shipping) {
-      productData.shipping = JSON.parse(shipping);
-      debugLog('Shipping data set');
+      try {
+        productData.shipping = JSON.parse(shipping);
+        debugLog('Shipping data set');
+      } catch (e) {
+        debugLog('Error parsing shipping:', e.message);
+      }
     }
 
     if (variants) {
-      productData.variants = JSON.parse(variants).map(variant => ({
-        ...variant,
-        price: validatePrice(variant.price),
-        stock: parseInt(variant.stock) || 0
-      }));
-      debugLog('Variants set:', productData.variants.length);
+      try {
+        productData.variants = JSON.parse(variants).map(variant => ({
+          ...variant,
+          price: validatePrice(variant.price),
+          stock: parseInt(variant.stock) || 0
+        }));
+        debugLog('Variants set:', productData.variants.length);
+      } catch (e) {
+        debugLog('Error parsing variants:', e.message);
+      }
     }
 
     // Create product instance
@@ -308,15 +319,24 @@ const getAllProducts = async (req, res) => {
       featured,
       inStock,
       tags,
-      attributes
+      attributes,
+      admin // New parameter for admin view
     } = req.query;
 
     const skip = (page - 1) * limit;
     const sortDirection = sortOrder === 'asc' ? 1 : -1;
 
-    const filter = { published: true };
+    const filter = {};
 
-    // Add approved filter - only show approved products by default
+    // If admin parameter is true, show all products regardless of published status
+    if (admin === 'true' && req.user && req.user.role === 'ADMIN') {
+      debugLog('Admin view - showing all products');
+      // Don't filter by published for admin
+    } else {
+      filter.published = true;
+    }
+
+    // Add approved filter - only show approved products by default for non-admin
     if (approved !== undefined) {
       filter.approved = approved === 'true';
     } else {
@@ -383,7 +403,11 @@ const getAllProducts = async (req, res) => {
 
     if (search) {
       debugLog('Search filter:', search);
-      filter.$text = { $search: search };
+      filter.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { sku: { $regex: search, $options: 'i' } }
+      ];
     }
 
     if (tags) {
@@ -404,40 +428,34 @@ const getAllProducts = async (req, res) => {
       }
     }
 
-    // FIXED: Handle sortBy properly
+    // Handle sortBy properly
     const sortOptions = {};
-    if (search) {
-      sortOptions.score = { $meta: 'textScore' };
-    } else {
-      // Map frontend sort parameters to actual database fields
-      switch(sortBy) {
-        case 'newest':
-          sortOptions.createdAt = sortDirection;
-          break;
-        case 'price':
-          sortOptions.price = sortDirection;
-          break;
-        case 'sales':
-          sortOptions['stats.sales'] = sortDirection;
-          break;
-        case 'rating':
-          sortOptions['stats.averageRating'] = sortDirection;
-          break;
-        case 'popularity':
-        case 'trending':
-          sortOptions['stats.views'] = sortDirection;
-          break;
-        case 'featured':
-          sortOptions.featured = -1; // Always show featured first
-          if (sortDirection === 1) {
-            sortOptions.createdAt = 1; // Then by oldest
-          } else {
-            sortOptions.createdAt = -1; // Then by newest
-          }
-          break;
-        default:
-          sortOptions.createdAt = sortDirection;
-      }
+    // Map frontend sort parameters to actual database fields
+    switch(sortBy) {
+      case 'newest':
+      case 'createdAt':
+        sortOptions.createdAt = sortDirection;
+        break;
+      case 'price':
+        sortOptions.price = sortDirection;
+        break;
+      case 'sales':
+        sortOptions['stats.sales'] = sortDirection;
+        break;
+      case 'rating':
+        sortOptions['stats.averageRating'] = sortDirection;
+        break;
+      case 'popularity':
+      case 'trending':
+      case 'views':
+        sortOptions['stats.views'] = sortDirection;
+        break;
+      case 'featured':
+        sortOptions.featured = -1; // Always show featured first
+        sortOptions.createdAt = sortDirection;
+        break;
+      default:
+        sortOptions.createdAt = sortDirection;
     }
 
     debugLog('Final filter:', filter);
@@ -453,7 +471,7 @@ const getAllProducts = async (req, res) => {
       .limit(parseInt(limit));
 
     // Select fields including stats for frontend
-    query = query.select('title price images stock category vendor featured createdAt stats.views stats.sales stats.averageRating stats.totalReviews');
+    query = query.select('title price images stock category vendor featured approved published createdAt updatedAt stats.views stats.sales stats.averageRating stats.totalReviews sku');
 
     const products = await query;
     const total = await Product.countDocuments(filter);
@@ -475,22 +493,9 @@ const getAllProducts = async (req, res) => {
 
     const priceRange = priceRangeAgg[0] || { minPrice: 0, maxPrice: 0 };
 
-    // Get featured products separately if not already filtered
-    let featuredProducts = [];
-    if (featured !== 'true' && products.length > 0) {
-      featuredProducts = await Product.find({
-        ...filter,
-        featured: true
-      })
-      .limit(4)
-      .select('title price images')
-      .populate('vendor', 'storeName');
-    }
-
     res.json({
       success: true,
       products,
-      featured: featuredProducts,
       filters: {
         priceRange
       },
@@ -505,14 +510,6 @@ const getAllProducts = async (req, res) => {
   } catch (error) {
     debugLog('Get all products error:', error.message);
     debugLog('Error stack:', error.stack);
-    
-    // Handle MongoDB sort errors
-    if (error.message && error.message.includes('Bad sort specification')) {
-      debugLog('Bad sort field, retrying with default sort');
-      // Remove sortBy from query and retry
-      delete req.query.sortBy;
-      return getAllProducts(req, res);
-    }
     
     res.status(500).json({ 
       success: false,
@@ -684,8 +681,9 @@ const updateProduct = async (req, res) => {
       'dimensions'
     ];
 
-    allowedUpdates.forEach(async field => {
-      if (updates[field] !== undefined) {
+    // Apply updates one by one with validation
+    for (const field of allowedUpdates) {
+      if (updates[field] !== undefined && updates[field] !== null) {
         debugLog(`Updating field "${field}":`, updates[field]);
         
         try {
@@ -701,17 +699,21 @@ const updateProduct = async (req, res) => {
             product[field] = JSON.parse(updates[field]);
           } else if (field === 'title') {
             product[field] = updates[field].trim();
+          } else if (field === 'description' || field === 'shortDescription') {
+            product[field] = updates[field] ? updates[field].trim() : '';
           } else if (field === 'category') {
             // Validate category if being updated
             const categoryId = updates[field];
-            if (!mongoose.Types.ObjectId.isValid(categoryId)) {
-              throw new Error(`Invalid category ID: ${categoryId}`);
+            if (categoryId && categoryId.trim()) {
+              if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+                throw new Error(`Invalid category ID: ${categoryId}`);
+              }
+              const categoryExists = await Category.findById(categoryId);
+              if (!categoryExists) {
+                throw new Error(`Category not found: ${categoryId}`);
+              }
+              product[field] = categoryId;
             }
-            const categoryExists = await Category.findById(categoryId);
-            if (!categoryExists) {
-              throw new Error(`Category not found: ${categoryId}`);
-            }
-            product[field] = categoryId;
           } else {
             product[field] = updates[field];
           }
@@ -720,13 +722,13 @@ const updateProduct = async (req, res) => {
           throw new Error(`Invalid format for ${field}: ${parseError.message}`);
         }
       }
-    });
+    }
 
     // Handle new images
     if (req.files && req.files.length > 0) {
       debugLog(`Uploading ${req.files.length} new images...`);
       const newImages = await uploadMultipleImages(req.files, 'products');
-      product.images = [...product.images, ...newImages].slice(0, 10);
+      product.images = [...product.images, ...newImages].slice(0, 10); // Limit to 10 images
       debugLog('Total images after upload:', product.images.length);
     }
 
@@ -761,12 +763,15 @@ const updateProduct = async (req, res) => {
         title: product.title,
         price: product.price,
         approved: product.approved,
+        published: product.published,
         images: product.images
       }
     });
 
   } catch (error) {
     debugLog('Update product error:', error.message);
+    debugLog('Error stack:', error.stack);
+    
     res.status(500).json({ 
       success: false,
       message: 'Failed to update product', 

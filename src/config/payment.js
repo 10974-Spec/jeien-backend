@@ -36,6 +36,11 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
       throw new Error('Invalid amount');
     }
     
+    // Validate amount - should be reasonable for e-commerce
+    if (amount > 150000) { // Max 150,000 KES for M-Pesa
+      throw new Error('Amount exceeds M-Pesa limit (KES 150,000)');
+    }
+    
     const accessToken = await getMpesaAccessToken();
     
     // Format phone number for M-Pesa (2547XXXXXXXX)
@@ -48,6 +53,14 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
     const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
     const password = Buffer.from(`174379${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
     
+    // Use a valid callback URL
+    const callbackUrl = process.env.NODE_ENV === 'production' 
+      ? 'https://yourdomain.com/api/payments/webhook'
+      : 'https://your-ngrok-url.ngrok.io/api/payments/webhook'; // For development
+    
+    // For development/testing, you can use a test callback URL
+    const testCallbackUrl = 'https://webhook.site/c0e8b7a4-1234-5678-90ab-cdef01234567'; // Replace with actual
+    
     const payload = {
       BusinessShortCode: 174379, // Lipa Na M-Pesa Online Shortcode
       Password: password,
@@ -57,7 +70,7 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
       PartyA: formattedPhone,
       PartyB: 174379,
       PhoneNumber: formattedPhone,
-      CallBackURL: `${process.env.API_URL}/api/payments/webhook`, // Make sure this is correct
+      CallBackURL: process.env.NODE_ENV === 'production' ? callbackUrl : testCallbackUrl,
       AccountReference: reference.substring(0, 12), // Max 12 characters
       TransactionDesc: 'Ecommerce Purchase'
     };
@@ -119,6 +132,8 @@ const initiateMpesaPayment = async (phone, amount, reference) => {
       errorMessage = 'M-Pesa system timeout. Please try again.';
     } else if (errorMessage.includes('Insufficient balance')) {
       errorMessage = 'Insufficient balance in M-Pesa account.';
+    } else if (errorMessage.includes('Invalid CallBackURL')) {
+      errorMessage = 'Invalid callback URL. Please configure a valid CallBackURL.';
     }
     
     return {

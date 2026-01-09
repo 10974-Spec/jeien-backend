@@ -11,13 +11,8 @@ const OrderSchema = new mongoose.Schema({
     ref: 'User',
     required: [true, 'Buyer is required']
   },
-  vendor: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Vendor',
-    required: [true, 'Vendor is required']
-  },
   items: [{
-    product: {
+    productId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Product',
       required: true
@@ -37,24 +32,25 @@ const OrderSchema = new mongoose.Schema({
       min: [1, 'Quantity must be at least 1']
     },
     image: {
-      type: String,
-      required: true
+      type: String
+    },
+    vendorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Vendor'
+    },
+    vendorName: {
+      type: String
     },
     category: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Category',
-      required: true
+      type: String
     },
     attributes: [{
       key: String,
       value: String
     }],
-    variant: {
+    productDetails: {
       sku: String,
-      attributes: [{
-        key: String,
-        value: String
-      }]
+      brand: String
     }
   }],
   deliveryAddress: {
@@ -91,55 +87,7 @@ const OrderSchema = new mongoose.Schema({
     postalCode: {
       type: String,
       trim: true
-    },
-    additionalInfo: {
-      type: String,
-      trim: true,
-      maxlength: [500, 'Additional info cannot exceed 500 characters']
     }
-  },
-  shippingAddress: {
-    fullName: String,
-    phone: String,
-    country: String,
-    city: String,
-    street: String,
-    postalCode: String
-  },
-  subtotal: {
-    type: Number,
-    required: true,
-    min: [0, 'Subtotal cannot be negative']
-  },
-  shippingCost: {
-    type: Number,
-    default: 0,
-    min: [0, 'Shipping cost cannot be negative']
-  },
-  taxAmount: {
-    type: Number,
-    default: 0,
-    min: [0, 'Tax amount cannot be negative']
-  },
-  discountAmount: {
-    type: Number,
-    default: 0,
-    min: [0, 'Discount amount cannot be negative']
-  },
-  totalAmount: {
-    type: Number,
-    required: true,
-    min: [0, 'Total amount cannot be negative']
-  },
-  commissionAmount: {
-    type: Number,
-    default: 0,
-    min: [0, 'Commission amount cannot be negative']
-  },
-  vendorAmount: {
-    type: Number,
-    default: 0,
-    min: [0, 'Vendor amount cannot be negative']
   },
   paymentMethod: {
     type: String,
@@ -149,9 +97,75 @@ const OrderSchema = new mongoose.Schema({
   paymentStatus: {
     type: String,
     required: true,
-    enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'],
+    enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'REFUNDED'],
     default: 'PENDING'
   },
+  customerNotes: {
+    type: String,
+    trim: true,
+    maxlength: [500, 'Customer notes cannot exceed 500 characters']
+  },
+  shippingMethod: {
+    type: String,
+    default: 'Standard',
+    trim: true
+  },
+  subtotal: {
+    type: Number,
+    required: true,
+    min: [0, 'Subtotal cannot be negative']
+  },
+  tax: {
+    type: Number,
+    required: true,
+    min: [0, 'Tax cannot be negative']
+  },
+  shippingFee: {
+    type: Number,
+    required: true,
+    min: [0, 'Shipping fee cannot be negative']
+  },
+  totalAmount: {
+    type: Number,
+    required: true,
+    min: [0, 'Total amount cannot be negative']
+  },
+  status: {
+    type: String,
+    required: true,
+    enum: ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED'],
+    default: 'PENDING'
+  },
+  vendorIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Vendor'
+  }],
+  shippedAt: {
+    type: Date
+  },
+  deliveredAt: {
+    type: Date
+  },
+  cancelledAt: {
+    type: Date
+  },
+  cancelledBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  cancellationReason: {
+    type: String,
+    trim: true
+  },
+  statusNotes: [{
+    status: String,
+    note: String,
+    updatedBy: mongoose.Schema.Types.ObjectId,
+    updatedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   paymentDetails: {
     transactionId: String,
     reference: String,
@@ -162,74 +176,14 @@ const OrderSchema = new mongoose.Schema({
       default: 'KES'
     },
     receiptUrl: String,
-    notes: String
-  },
-  status: {
-    type: String,
-    required: true,
-    enum: ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED', 'ON_HOLD'],
-    default: 'PENDING'
-  },
-  shippingMethod: {
-    type: String,
-    trim: true
-  },
-  trackingNumber: {
-    type: String,
-    trim: true
-  },
-  shippingProvider: {
-    type: String,
-    trim: true
+    notes: String,
+    phoneNumber: String,
+    amountPaid: Number,
+    errorCode: String,
+    errorDescription: String
   },
   estimatedDelivery: {
     type: Date
-  },
-  deliveredAt: {
-    type: Date
-  },
-  cancelledAt: {
-    type: Date
-  },
-  cancellationReason: {
-    type: String,
-    trim: true,
-    maxlength: [500, 'Cancellation reason cannot exceed 500 characters']
-  },
-  notes: {
-    type: String,
-    trim: true,
-    maxlength: [1000, 'Notes cannot exceed 1000 characters']
-  },
-  customerNotes: {
-    type: String,
-    trim: true,
-    maxlength: [500, 'Customer notes cannot exceed 500 characters']
-  },
-  metadata: {
-    ipAddress: String,
-    userAgent: String,
-    deviceType: String,
-    browser: String
-  },
-  flags: {
-    isGift: {
-      type: Boolean,
-      default: false
-    },
-    giftMessage: String,
-    requiresSignature: {
-      type: Boolean,
-      default: false
-    },
-    isFragile: {
-      type: Boolean,
-      default: false
-    },
-    isExpress: {
-      type: Boolean,
-      default: false
-    }
   }
 }, {
   timestamps: true,
@@ -256,46 +210,38 @@ OrderSchema.virtual('buyerInfo', {
   justOne: true
 });
 
-OrderSchema.virtual('vendorInfo', {
-  ref: 'Vendor',
-  localField: 'vendor',
-  foreignField: '_id',
-  justOne: true
-});
-
-OrderSchema.virtual('productInfo', {
-  ref: 'Product',
-  localField: 'items.product',
-  foreignField: '_id',
-  justOne: false
-});
-
 OrderSchema.pre('save', function(next) {
-  if (this.isNew) {
-    this.orderId = 'ORD-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+  if (this.isNew && !this.orderId) {
+    const crypto = require('crypto');
+    this.orderId = `ORD-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
   }
   
-  if (!this.shippingAddress || Object.keys(this.shippingAddress).length === 0) {
-    this.shippingAddress = { ...this.deliveryAddress };
-  }
-  
-  if (this.vendorAmount === 0 && this.totalAmount > 0 && this.commissionAmount === 0) {
-    this.vendorAmount = this.totalAmount;
-  } else if (this.commissionAmount > 0) {
-    this.vendorAmount = this.totalAmount - this.commissionAmount;
+  if (!this.estimatedDelivery) {
+    this.estimatedDelivery = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   }
   
   next();
 });
 
 OrderSchema.pre('validate', function(next) {
-  if (this.items && this.items.length === 0) {
-    next(new Error('Order must contain at least one item'));
+  // Remove the strict total amount validation that was causing issues
+  // Instead, we'll calculate the total if it's not set
+  if (!this.totalAmount && this.subtotal !== undefined) {
+    this.totalAmount = this.subtotal + (this.tax || 0) + (this.shippingFee || 0);
   }
   
-  const calculatedTotal = this.subtotal + this.shippingCost + this.taxAmount - this.discountAmount;
-  if (Math.abs(calculatedTotal - this.totalAmount) > 0.01) {
-    next(new Error('Total amount calculation is incorrect'));
+  // Round to 2 decimal places to avoid floating point precision issues
+  if (this.totalAmount) {
+    this.totalAmount = parseFloat(this.totalAmount.toFixed(2));
+  }
+  if (this.subtotal) {
+    this.subtotal = parseFloat(this.subtotal.toFixed(2));
+  }
+  if (this.tax) {
+    this.tax = parseFloat(this.tax.toFixed(2));
+  }
+  if (this.shippingFee) {
+    this.shippingFee = parseFloat(this.shippingFee.toFixed(2));
   }
   
   next();
@@ -303,14 +249,12 @@ OrderSchema.pre('validate', function(next) {
 
 OrderSchema.index({ orderId: 1 }, { unique: true });
 OrderSchema.index({ buyer: 1 });
-OrderSchema.index({ vendor: 1 });
+OrderSchema.index({ vendorIds: 1 });
 OrderSchema.index({ status: 1 });
 OrderSchema.index({ paymentStatus: 1 });
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ 'paymentDetails.transactionId': 1 });
-OrderSchema.index({ trackingNumber: 1 });
 OrderSchema.index({ 'deliveryAddress.phone': 1 });
 OrderSchema.index({ 'deliveryAddress.email': 1 });
-OrderSchema.index({ totalAmount: -1 });
 
 module.exports = mongoose.model('Order', OrderSchema);

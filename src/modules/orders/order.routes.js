@@ -2,25 +2,28 @@ const express = require('express');
 const router = express.Router();
 const authenticate = require('../../middlewares/auth.middleware');
 const { adminOnly } = require('../../middlewares/role.middleware');
-const {
-  createOrder,
-  getMyOrders,
-  getOrderById,
-  updateOrderStatus,
-  updatePaymentStatus,
-  getAllOrders,
-  cancelOrder,
-  trackOrder
-} = require('./order.controller');
+const orderController = require('./order.controller');
 
-router.post('/', authenticate, createOrder);
-router.get('/my', authenticate, getMyOrders);
-router.get('/:id', authenticate, getOrderById);
-router.put('/:id/status', authenticate, updateOrderStatus);
-router.put('/:id/cancel', authenticate, cancelOrder);
-router.get('/track/:orderId', trackOrder);
+// Public routes
+router.get('/track/:orderId', orderController.trackOrder);
 
-router.put('/:id/payment-status', authenticate, adminOnly, updatePaymentStatus);
-router.get('/admin/all', authenticate, adminOnly, getAllOrders);
+// Authenticated routes for buyers
+router.post('/', authenticate, orderController.createOrder);
+router.get('/user/me', authenticate, orderController.getUserOrders);
+router.get('/search', authenticate, orderController.searchOrders);
+router.get('/:id', authenticate, orderController.getOrderById);
+router.post('/:id/cancel', authenticate, orderController.cancelOrder);
+
+// Order status updates (buyer can cancel, admin/vendor can update status)
+router.put('/:id/status', authenticate, orderController.updateOrderStatus);
+
+// Payment status updates (admin only)
+router.put('/:id/payment', authenticate, adminOnly, orderController.updatePaymentStatus);
+
+// Vendor routes (using adminOnly if vendorOnly doesn't exist)
+router.get('/vendor/orders', authenticate, adminOnly, orderController.getVendorOrders);
+
+// Admin routes
+router.get('/admin/all', authenticate, adminOnly, orderController.getAdminOrders);
 
 module.exports = router;
