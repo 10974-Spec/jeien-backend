@@ -77,9 +77,9 @@ const calculateVAT = (price, vatRate = 16) => {
   return {
     basePrice: validatedPrice,
     vatRate: parseFloat(vatRate.toFixed(2)),
-    vatAmount: parseFloat(vatAmount.toFixed(2)),
+    vatAmount: parseFloat(vatAmount.toFixeSd(2)),
     totalAmount: parseFloat(totalAmount.toFixed(2))
-  };
+  };S
 };
 
 module.exports = { formatPrice, validatePrice, applyDiscount, calculateVAT };

@@ -2,6 +2,7 @@ const Ad = require('./ad.model');
 const Vendor = require('../vendors/vendor.model');
 const Product = require('../products/product.model');
 const Category = require('../categories/category.model');
+const { uploadSingleImage } = require('../../utils/upload.util');
 
 const createAd = async (req, res) => {
   try {
@@ -50,14 +51,24 @@ const createAd = async (req, res) => {
       }
     }
 
-    // FIXED: Use local file path instead of Cloudinary
-    // Multer has already saved the file to uploads/ads/
-    const imageUrl = `/uploads/ads/${req.file.filename}`;
+    // UPLOAD TO CLOUDINARY
+    let imageUrl = null;
+    try {
+      console.log('Uploading image to Cloudinary...');
+      imageUrl = await uploadSingleImage(req.file, 'ads');
+      console.log('Image uploaded to Cloudinary:', imageUrl);
+    } catch (uploadError) {
+      console.error('Cloudinary upload failed:', uploadError);
+      return res.status(500).json({ 
+        message: 'Failed to upload image', 
+        error: uploadError.message 
+      });
+    }
 
     const adData = {
       title: title.trim(),
       description: description || '',
-      image: imageUrl, // Local file path
+      image: imageUrl, // Cloudinary URL
       link: link.trim(),
       linkType: linkType || 'URL',
       targetId: targetId || null,
@@ -316,8 +327,19 @@ const updateAd = async (req, res) => {
     });
 
     if (req.file) {
-      // FIXED: Use local file path instead of Cloudinary
-      ad.image = `/uploads/ads/${req.file.filename}`;
+      // UPLOAD NEW IMAGE TO CLOUDINARY
+      try {
+        console.log('Uploading new image to Cloudinary...');
+        const imageUrl = await uploadSingleImage(req.file, 'ads');
+        console.log('New image uploaded to Cloudinary:', imageUrl);
+        ad.image = imageUrl;
+      } catch (uploadError) {
+        console.error('Cloudinary upload failed:', uploadError);
+        return res.status(500).json({ 
+          message: 'Failed to upload new image', 
+          error: uploadError.message 
+        });
+      }
     } else if (updates.removeImage === 'true') {
       ad.image = null;
     }
