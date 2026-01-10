@@ -194,9 +194,9 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Calculate totals with proper rounding
+    // Calculate totals with proper rounding (NO TAX for buyers)
     subtotal = parseFloat(subtotal.toFixed(2));
-    const tax = parseFloat((subtotal * 0.16).toFixed(2));
+    const tax = 0; // No tax for buyers
     
     // NEW: Calculate shipping based on rules
     let shipping = 0; // Default to free shipping
@@ -207,9 +207,6 @@ const createOrder = async (req, res) => {
     if (!applyFreeShipping && subtotal < 5000) {
       shipping = shippingMethod === 'Express' ? 1000 : 500;
     }
-    
-    // Alternative: Always free shipping (uncomment if you want)
-    // shipping = 0;
     
     const totalAmount = parseFloat((subtotal + tax + shipping).toFixed(2));
 
@@ -1208,14 +1205,13 @@ const getAdminOrders = async (req, res) => {
     debugLog('Admin orders found:', orders.length);
     debugLog('Total admin orders:', total);
 
-    // Calculate admin statistics
+    // Calculate admin statistics (updated to remove tax from revenue calculation)
     const stats = await Order.aggregate([
       {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' },
-          totalTax: { $sum: '$tax' },
+          totalRevenue: { $sum: '$subtotal' }, // Changed from totalAmount to subtotal (no tax)
           totalShipping: { $sum: '$shippingFee' },
           totalCommission: { $sum: { $multiply: ['$subtotal', 0.15] } },
           pendingOrders: {
@@ -1237,7 +1233,6 @@ const getAdminOrders = async (req, res) => {
     const statsResult = stats[0] || {
       totalOrders: 0,
       totalRevenue: 0,
-      totalTax: 0,
       totalShipping: 0,
       totalCommission: 0,
       pendingOrders: 0,
