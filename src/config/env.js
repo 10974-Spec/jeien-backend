@@ -25,7 +25,7 @@ const config = {
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
   
   // Frontend URL
-  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
+  FRONTEND_URL: process.env.FRONTEND_URL || 'httpa://www.jeien.com',
   
   // Optional services
   REDIS_URL: process.env.REDIS_URL,
