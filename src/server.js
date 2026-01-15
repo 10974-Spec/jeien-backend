@@ -7,14 +7,25 @@ const PORT = config.PORT || 5000;
 console.log('🚀 Starting server...');
 console.log(`📁 Environment: ${config.NODE_ENV}`);
 console.log(`🌐 Frontend URL: ${config.FRONTEND_URL}`);
+console.log(`🔧 Node version: ${process.version}`);
 
 // Graceful shutdown function
 const gracefulShutdown = async (signal) => {
   console.log(`\n${signal} received, shutting down gracefully...`);
   
   try {
-    // Close MongoDB connection with promise (no callback)
-    if (mongoose.connection.readyState !== 0) { // 0 = disconnected
+    // Close server first
+    if (server) {
+      await new Promise((resolve) => {
+        server.close(() => {
+          console.log('✅ HTTP server closed.');
+          resolve();
+        });
+      });
+    }
+    
+    // Then close MongoDB connection
+    if (mongoose.connection.readyState !== 0) {
       await mongoose.connection.close();
       console.log('✅ MongoDB connection closed.');
     }
@@ -28,24 +39,20 @@ const gracefulShutdown = async (signal) => {
 };
 
 // MongoDB connection with retry logic
-const connectDB = async () => {
+const connectDB = async (retries = 5) => {
   try {
-    await mongoose.connect(config.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    });
+    await mongoose.connect(config.MONGODB_URI);
     
     console.log('✅ Connected to MongoDB');
     
     // Connection events
     mongoose.connection.on('error', (err) => {
-      console.error('❌ MongoDB connection error:', err);
+      console.error('❌ MongoDB connection error:', err.message);
     });
     
     mongoose.connection.on('disconnected', () => {
-      console.warn('⚠️ MongoDB disconnected');
+      console.warn('⚠️ MongoDB disconnected. Attempting to reconnect...');
+      setTimeout(connectDB, 5000);
     });
     
     mongoose.connection.on('reconnected', () => {
@@ -55,11 +62,18 @@ const connectDB = async () => {
   } catch (error) {
     console.error('❌ MongoDB connection failed:', error.message);
     
-    // Retry connection after 5 seconds
-    console.log('🔄 Retrying connection in 5 seconds...');
-    setTimeout(connectDB, 5000);
+    if (retries > 0) {
+      console.log(`🔄 Retrying connection (${retries} attempts left)...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return connectDB(retries - 1);
+    } else {
+      console.error('❌ Maximum retries reached. Exiting...');
+      process.exit(1);
+    }
   }
 };
+
+let server;
 
 // Start server function
 const startServer = async () => {
@@ -68,8 +82,9 @@ const startServer = async () => {
     await connectDB();
     
     // Start the server
-    const server = app.listen(PORT, () => {
+    server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ Server running on port ${PORT}`);
+      console.log(`🔗 Local: http://localhost:${PORT}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
       console.log(`🔗 API: http://localhost:${PORT}/api`);
       
@@ -90,6 +105,15 @@ const startServer = async () => {
       }
     });
     
+    // Server event handlers
+    server.on('listening', () => {
+      console.log('✅ Server is listening for connections');
+    });
+    
+    server.on('close', () => {
+      console.log('⚠️ Server is closing');
+    });
+    
     // Setup shutdown handlers
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
@@ -106,6 +130,11 @@ const startServer = async () => {
       gracefulShutdown('unhandledRejection');
     });
     
+    // Handle exit signals
+    process.on('exit', (code) => {
+      console.log(`Process exiting with code: ${code}`);
+    });
+    
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);
@@ -114,3 +143,6 @@ const startServer = async () => {
 
 // Start the application
 startServer();
+
+// Export for testing
+module.exports = { app, server };
