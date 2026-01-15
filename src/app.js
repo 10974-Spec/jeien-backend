@@ -19,56 +19,66 @@ const errorMiddleware = require('./middlewares/error.middleware');
 
 const app = express();
 
-// Security middleware - Configure Helmet properly
+// Security middleware
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", config.FRONTEND_URL],
-    },
-  },
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// CORS configuration - More permissive for development
+// CORS configuration - COMPLETELY FIXED!
+const allowedOrigins = [
+  'http://localhost:5173', // Vite dev server
+  'http://localhost:3000', // Create React App dev server
+  'https://jeien.com',
+  'https://www.jeien.com',
+  'https://jeien-backend.onrender.com',
+  'http://localhost:5000' // Backend itself
+];
+
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    const allowedOrigins = [
-      config.FRONTEND_URL,
-      'http://localhost:3000',
-      'http://localhost:5000',
-      'https://jeien.onrender.com',
-      'https://www.jeien.com'
-    ];
-    
     if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
       callback(null, true);
     } else {
+      console.error('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   optionsSuccessStatus: 200,
-  exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset']
+  exposedHeaders: [
+    'X-RateLimit-Limit', 
+    'X-RateLimit-Remaining', 
+    'X-RateLimit-Reset',
+    'X-Request-ID'
+  ],
+  allowedHeaders: [
+    'Origin',
+    'X-Requested-With',
+    'Content-Type',
+    'Accept',
+    'Authorization',
+    'X-API-Key',
+    'X-Request-ID',
+    'X-Client',          // ADDED THIS
+    'X-Client-Version'   // ADDED THIS
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
 };
 
+// Apply CORS globally
 app.use(cors(corsOptions));
 
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
 
-// Rate limiting - Moved after CORS and body parsing
+// Rate limiting - reduced for development
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // Increased from 100 to 200
+  max: 500, // Increased limit
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again later.'
@@ -77,11 +87,30 @@ const limiter = rateLimit({
   legacyHeaders: false,
   skip: (req) => {
     // Skip rate limiting for health checks
-    return req.path === '/api/health' || req.path === '/health';
+    return req.path === '/api/health' || req.method === 'OPTIONS';
   }
 });
 
 app.use('/api', limiter);
+
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  const requestId = req.headers['x-request-id'] || Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  req.requestId = requestId;
+  
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+  console.log(`  Origin: ${req.headers.origin || 'none'}`);
+  console.log(`  Headers:`, req.headers);
+  
+  if (req.method === 'POST' || req.method === 'PUT') {
+    console.log('  Body:', JSON.stringify(req.body).substring(0, 200));
+  }
+  next();
+});
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -103,7 +132,32 @@ app.get('/api/health', (req, res) => {
     environment: config.NODE_ENV,
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    nodeVersion: process.version
+    nodeVersion: process.version,
+    cors: {
+      allowedOrigins: allowedOrigins,
+      clientOrigin: req.headers.origin || 'none',
+      headers: req.headers
+    }
+  });
+});
+
+// CORS test endpoint - VERY IMPORTANT!
+app.get('/api/cors-test', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'CORS test successful!',
+    timestamp: new Date().toISOString(),
+    clientInfo: {
+      origin: req.headers.origin,
+      userAgent: req.headers['user-agent'],
+      requestId: req.requestId,
+      headers: req.headers
+    },
+    serverInfo: {
+      allowedOrigins: allowedOrigins,
+      environment: config.NODE_ENV,
+      serverTime: new Date().toISOString()
+    }
   });
 });
 
@@ -124,132 +178,56 @@ app.get('/api', (req, res) => {
       '/api/payments',
       '/api/ads',
       '/api/reviews',
-      '/api/health'
+      '/api/health',
+      '/api/cors-test'
     ]
   });
 });
 
 // ========== REACT FRONTEND SERVING ==========
 if (config.NODE_ENV === 'production') {
-  // Serve static files from React build directory
   const clientBuildPath = path.join(__dirname, '../client/build');
-  
-  // Check if client build exists
   const fs = require('fs');
+  
   if (fs.existsSync(clientBuildPath)) {
     console.log('✅ Serving React app from:', clientBuildPath);
-    app.use(express.static(clientBuildPath, {
-      maxAge: '1d', // Cache static assets
-      setHeaders: (res, path) => {
-        if (path.endsWith('.html')) {
-          res.setHeader('Cache-Control', 'no-cache');
-        }
-      }
-    }));
+    app.use(express.static(clientBuildPath));
     
-    // Handle React routing - return index.html for all non-API routes
     app.get('*', (req, res) => {
       if (!req.path.startsWith('/api')) {
         res.sendFile(path.join(clientBuildPath, 'index.html'));
       }
     });
-  } else {
-    console.warn('⚠️  React build not found at:', clientBuildPath);
-    console.warn('⚠️  Run: cd client && npm run build');
-    
-    // Fallback message for missing React build
-    app.get('*', (req, res) => {
-      if (!req.path.startsWith('/api')) {
-        res.status(200).send(`
-          <html>
-            <head>
-              <title>E-commerce Platform</title>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <style>
-                body {
-                  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                  color: white;
-                  min-height: 100vh;
-                  display: flex;
-                  align-items: center;
-                  justify-content: center;
-                  padding: 20px;
-                }
-                .container {
-                  background: rgba(255, 255, 255, 0.1);
-                  backdrop-filter: blur(10px);
-                  padding: 40px;
-                  border-radius: 20px;
-                  max-width: 600px;
-                  text-align: center;
-                  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-                }
-                h1 {
-                  margin-bottom: 20px;
-                  font-size: 2.5rem;
-                }
-                .card {
-                  background: rgba(255, 255, 255, 0.15);
-                  padding: 20px;
-                  border-radius: 10px;
-                  margin: 20px 0;
-                }
-                code {
-                  background: rgba(0, 0, 0, 0.3);
-                  padding: 10px 15px;
-                  border-radius: 5px;
-                  display: block;
-                  margin: 10px 0;
-                  font-family: 'Courier New', monospace;
-                }
-                a {
-                  color: #ffdd40;
-                  text-decoration: none;
-                  font-weight: bold;
-                }
-                a:hover {
-                  text-decoration: underline;
-                }
-              </style>
-            </head>
-            <body>
-              <div class="container">
-                <h1>🚀 E-commerce Platform Backend</h1>
-                <div class="card">
-                  <p><strong>React frontend is not built yet.</strong></p>
-                  <p>To build the frontend, run:</p>
-                  <code>cd client && npm run build</code>
-                </div>
-                <div class="card">
-                  <p><strong>API Endpoints:</strong></p>
-                  <p>📊 API Status: <a href="/api">/api</a></p>
-                  <p>❤️ Health Check: <a href="/api/health">/api/health</a></p>
-                </div>
-              </div>
-            </body>
-          </html>
-        `);
-      }
-    });
   }
 } else {
-  // Development mode - provide info message
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      res.status(200).json({
-        success: true,
-        message: 'Development Server',
-        note: 'React app should be running separately on port 3000',
-        api: {
-          root: '/api',
-          health: '/api/health'
-        },
-        frontend: 'Run: cd client && npm start',
-        timestamp: new Date().toISOString(),
-      });
-    }
+  // Development mode - helpful root endpoint
+  app.get('/', (req, res) => {
+    res.json({
+      success: true,
+      message: 'Development Backend Server',
+      note: 'React frontend should be running separately on port 5173',
+      api: {
+        root: '/api',
+        health: '/api/health',
+        corsTest: '/api/cors-test',
+        auth: {
+          login: 'POST /api/auth/login',
+          register: 'POST /api/auth/register'
+        }
+      },
+      timestamp: new Date().toISOString(),
+    });
+  });
+  
+  // Test login endpoint (for debugging)
+  app.post('/api/auth/test-login', (req, res) => {
+    console.log('Test login attempt:', req.body);
+    res.json({
+      success: true,
+      message: 'Test login endpoint working',
+      data: req.body,
+      timestamp: new Date().toISOString()
+    });
   });
 }
 
@@ -259,6 +237,12 @@ app.use('/api/*', (req, res) => {
     success: false,
     message: `API endpoint ${req.originalUrl} not found`,
     timestamp: new Date().toISOString(),
+    availableEndpoints: [
+      '/api/auth/login',
+      '/api/auth/register',
+      '/api/health',
+      '/api/cors-test'
+    ]
   });
 });
 

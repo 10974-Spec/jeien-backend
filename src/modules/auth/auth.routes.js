@@ -20,4 +20,23 @@ router.get('/me', authenticate, me);
 router.put('/profile', authenticate, updateProfile);
 router.put('/profile-image', authenticate, singleUpload, updateProfileImage);
 
+// ADD THIS TEST ENDPOINT
+router.post('/test-login', (req, res) => {
+  console.log('Test login called:', req.body);
+  
+  res.json({
+    success: true,
+    message: 'Test login successful',
+    token: 'test_jwt_token_' + Date.now(),
+    user: {
+      id: 'test_id_123',
+      email: req.body.email || 'admin@example.com',
+      name: 'Test Admin',
+      role: 'ADMIN',
+      profileImage: null,
+      createdAt: new Date().toISOString()
+    }
+  });
+});
+
 module.exports = router;
