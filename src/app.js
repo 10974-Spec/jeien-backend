@@ -25,7 +25,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-// CORS configuration - COMPLETELY FIXED!
+// CORS configuration - FIXED VERSION
 const allowedOrigins = [
   'http://localhost:5173', // Vite dev server
   'http://localhost:3000', // Create React App dev server
@@ -35,45 +35,53 @@ const allowedOrigins = [
   'http://localhost:5000' // Backend itself
 ];
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+// IMPORTANT: Create a custom CORS middleware to handle preflight properly
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Check if origin is allowed
+  if (!origin || allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Expose-Headers', [
+      'X-RateLimit-Limit', 
+      'X-RateLimit-Remaining', 
+      'X-RateLimit-Reset',
+      'X-Request-ID',
+      'X-Request-Id'  // Add lowercase version too
+    ].join(', '));
     
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
-      callback(null, true);
-    } else {
-      console.error('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+      res.header('Access-Control-Allow-Headers', [
+        'Origin',
+        'X-Requested-With',
+        'Content-Type',
+        'Accept',
+        'Authorization',
+        'X-API-Key',
+        'X-Request-ID',
+        'X-Request-Id',  // Add lowercase version
+        'x-request-id',  // Add lowercase version explicitly
+        'x-client',      // Add lowercase versions
+        'x-client-version',
+        'X-Client',
+        'X-Client-Version'
+      ].join(', '));
+      res.header('Access-Control-Max-Age', '86400'); // 24 hours
+      return res.status(200).end();
     }
-  },
-  credentials: true,
-  optionsSuccessStatus: 200,
-  exposedHeaders: [
-    'X-RateLimit-Limit', 
-    'X-RateLimit-Remaining', 
-    'X-RateLimit-Reset',
-    'X-Request-ID'
-  ],
-  allowedHeaders: [
-    'Origin',
-    'X-Requested-With',
-    'Content-Type',
-    'Accept',
-    'Authorization',
-    'X-API-Key',
-    'X-Request-ID',
-    'X-Client',          // ADDED THIS
-    'X-Client-Version'   // ADDED THIS
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
-};
-
-// Apply CORS globally
-app.use(cors(corsOptions));
-
-// Handle preflight requests explicitly
-app.options('*', cors(corsOptions));
+  } else if (process.env.NODE_ENV === 'production') {
+    console.error('CORS blocked origin:', origin);
+    return res.status(403).json({
+      success: false,
+      message: 'Not allowed by CORS'
+    });
+  }
+  
+  next();
+});
 
 // Rate limiting - reduced for development
 const limiter = rateLimit({
@@ -86,7 +94,7 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip rate limiting for health checks
+    // Skip rate limiting for health checks and preflight
     return req.path === '/api/health' || req.method === 'OPTIONS';
   }
 });
@@ -99,16 +107,27 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
-  const requestId = req.headers['x-request-id'] || Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  // Generate request ID if not present
+  const requestId = req.headers['x-request-id'] || 
+                   req.headers['X-Request-ID'] || 
+                   req.headers['X-Request-Id'] ||
+                   Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  
   req.requestId = requestId;
   
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+  // Add request ID to response headers (both cases for compatibility)
+  res.header('X-Request-ID', requestId);
+  res.header('X-Request-Id', requestId);
+  res.header('x-request-id', requestId);
+  
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl} [${requestId}]`);
   console.log(`  Origin: ${req.headers.origin || 'none'}`);
-  console.log(`  Headers:`, req.headers);
+  console.log(`  User-Agent: ${req.headers['user-agent']?.substring(0, 50)}...`);
   
   if (req.method === 'POST' || req.method === 'PUT') {
     console.log('  Body:', JSON.stringify(req.body).substring(0, 200));
   }
+  
   next();
 });
 
@@ -133,10 +152,15 @@ app.get('/api/health', (req, res) => {
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     nodeVersion: process.version,
+    requestId: req.requestId,
     cors: {
       allowedOrigins: allowedOrigins,
       clientOrigin: req.headers.origin || 'none',
-      headers: req.headers
+      method: req.method,
+      headers: {
+        'x-request-id': req.headers['x-request-id'],
+        'X-Request-ID': req.headers['X-Request-ID']
+      }
     }
   });
 });
@@ -147,11 +171,16 @@ app.get('/api/cors-test', (req, res) => {
     success: true,
     message: 'CORS test successful!',
     timestamp: new Date().toISOString(),
+    requestId: req.requestId,
     clientInfo: {
       origin: req.headers.origin,
       userAgent: req.headers['user-agent'],
-      requestId: req.requestId,
-      headers: req.headers
+      requestHeaders: {
+        'x-request-id': req.headers['x-request-id'],
+        'X-Request-ID': req.headers['X-Request-ID'],
+        'x-client': req.headers['x-client'],
+        'x-client-version': req.headers['x-client-version']
+      }
     },
     serverInfo: {
       allowedOrigins: allowedOrigins,
@@ -168,6 +197,7 @@ app.get('/api', (req, res) => {
     message: 'E-commerce API',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
+    requestId: req.requestId,
     endpoints: [
       '/api/auth',
       '/api/users',
@@ -216,6 +246,7 @@ if (config.NODE_ENV === 'production') {
         }
       },
       timestamp: new Date().toISOString(),
+      requestId: req.requestId,
     });
   });
   
@@ -226,7 +257,8 @@ if (config.NODE_ENV === 'production') {
       success: true,
       message: 'Test login endpoint working',
       data: req.body,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      requestId: req.requestId,
     });
   });
 }
@@ -237,6 +269,7 @@ app.use('/api/*', (req, res) => {
     success: false,
     message: `API endpoint ${req.originalUrl} not found`,
     timestamp: new Date().toISOString(),
+    requestId: req.requestId,
     availableEndpoints: [
       '/api/auth/login',
       '/api/auth/register',

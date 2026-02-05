@@ -86,12 +86,17 @@ const startServer = async () => {
       console.log(`✅ Server running on port ${PORT}`);
       console.log(`🔗 Local: http://localhost:${PORT}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+      console.log(`🔗 CORS Test: http://localhost:${PORT}/api/cors-test`);
       console.log(`🔗 API: http://localhost:${PORT}/api`);
       
       if (config.NODE_ENV === 'production') {
         console.log('📱 Serving React frontend from build directory');
       } else {
-        console.log('💻 React frontend should run separately on port 3000');
+        console.log('💻 React frontend should run separately on port 5173');
+        console.log('\n⚠️  IMPORTANT CORS FIXES APPLIED:');
+        console.log('   - Added lowercase "x-request-id" to allowed headers');
+        console.log('   - Custom CORS middleware handles preflight properly');
+        console.log('   - Both uppercase and lowercase request IDs supported');
       }
     });
     

@@ -196,9 +196,9 @@ const createOrder = async (req, res) => {
 
     // Calculate totals with proper rounding (NO TAX for buyers)
     subtotal = parseFloat(subtotal.toFixed(2));
-    const tax = 0; // No tax for buyers
+    const tax = 0; // ZERO TAX - NO TAX FOR BUYERS
     
-    // NEW: Calculate shipping based on rules
+    // Calculate shipping based on rules
     let shipping = 0; // Default to free shipping
     
     // Only apply shipping fee if:
@@ -208,7 +208,8 @@ const createOrder = async (req, res) => {
       shipping = shippingMethod === 'Express' ? 1000 : 500;
     }
     
-    const totalAmount = parseFloat((subtotal + tax + shipping).toFixed(2));
+    // Calculate total amount (NO TAX included)
+    const totalAmount = parseFloat((subtotal + shipping).toFixed(2));
 
     debugLog('Calculated totals:', {
       subtotal,
@@ -238,7 +239,7 @@ const createOrder = async (req, res) => {
     
     debugLog('Generated order ID:', orderId);
 
-    // Create order object
+    // Create order object (NO TAX included)
     const orderData = {
       orderId,
       buyer: req.user.id,
@@ -252,9 +253,9 @@ const createOrder = async (req, res) => {
       customerNotes: customerNotes || '',
       shippingMethod,
       subtotal: subtotal,
-      tax: tax,
+      tax: tax, // ZERO TAX - ALWAYS 0
       shippingFee: shipping, // Use calculated shipping (0 or amount)
-      totalAmount: totalAmount,
+      totalAmount: totalAmount, // NO TAX in total
       status: 'PENDING',
       paymentStatus: paymentMethod === 'CASH_ON_DELIVERY' ? 'PENDING' : 'PROCESSING',
       vendorIds: vendorIds.length > 0 ? vendorIds : [...new Set(orderItems.map(item => item.vendorId).filter(id => id))],
@@ -263,7 +264,8 @@ const createOrder = async (req, res) => {
         freeShipping: shipping === 0, // Mark if free shipping was applied
         discountApplied: false, // You can implement discount logic here
         discountAmount: 0,
-        discountCode: discountCode || ''
+        discountCode: discountCode || '',
+        taxApplied: false // Explicitly mark that NO TAX was applied
       }
     };
 
@@ -271,7 +273,8 @@ const createOrder = async (req, res) => {
       ...orderData,
       itemsCount: orderData.items.length,
       itemPrices: orderData.items.map(i => ({ title: i.title, price: i.price, quantity: i.quantity })),
-      freeShipping: orderData.flags.freeShipping
+      freeShipping: orderData.flags.freeShipping,
+      taxApplied: false // Confirm NO TAX
     });
 
     // Create order
@@ -282,6 +285,7 @@ const createOrder = async (req, res) => {
       orderId: order.orderId,
       orderDbId: order._id,
       totalAmount: order.totalAmount,
+      tax: order.tax, // Should be 0
       shippingFee: order.shippingFee,
       freeShipping: order.flags.freeShipping,
       status: order.status,
@@ -331,12 +335,13 @@ const createOrder = async (req, res) => {
         paymentMethod: order.paymentMethod,
         shippingMethod: order.shippingMethod,
         subtotal: order.subtotal,
-        tax: order.tax,
+        tax: order.tax, // ZERO TAX
         shippingFee: order.shippingFee,
-        totalAmount: order.totalAmount,
+        totalAmount: order.totalAmount, // NO TAX included
         status: order.status,
         paymentStatus: order.paymentStatus,
         freeShipping: order.flags.freeShipping,
+        taxApplied: false, // Explicit NO TAX flag
         createdAt: order.createdAt,
         estimatedDelivery: order.estimatedDelivery
       },
@@ -344,7 +349,8 @@ const createOrder = async (req, res) => {
         required: order.paymentMethod !== 'CASH_ON_DELIVERY',
         method: order.paymentMethod,
         amount: order.totalAmount,
-        currency: 'KES'
+        currency: 'KES',
+        taxIncluded: false // Confirm NO TAX in payment
       }
     });
 
@@ -413,7 +419,8 @@ const getOrderById = async (req, res) => {
       orderId: order.orderId,
       buyerId: order.buyer?._id,
       currentUserId: req.user.id,
-      userRole: req.user.role
+      userRole: req.user.role,
+      tax: order.tax // Should be 0
     });
 
     // Check authorization
@@ -457,7 +464,9 @@ const getOrderById = async (req, res) => {
       success: true,
       order: {
         ...order.toObject(),
-        items: itemsWithDetails
+        items: itemsWithDetails,
+        taxApplied: order.tax === 0 ? false : true, // Should always be false
+        taxAmount: order.tax // Should always be 0
       }
     });
 
@@ -585,7 +594,8 @@ const updateOrderStatus = async (req, res) => {
     debugLog('Order found:', {
       orderId: order.orderId,
       currentStatus: order.status,
-      newStatus: status
+      newStatus: status,
+      tax: order.tax // Should be 0
     });
 
     // Check authorization
@@ -662,6 +672,7 @@ const updateOrderStatus = async (req, res) => {
         status: order.status,
         previousStatus: oldStatus,
         paymentStatus: order.paymentStatus,
+        tax: order.tax, // Should be 0
         updatedAt: order.updatedAt
       }
     });
@@ -685,7 +696,7 @@ const trackOrder = async (req, res) => {
 
     // Find order by orderId (not _id)
     const order = await Order.findOne({ orderId })
-      .select('orderId status paymentStatus shippedAt deliveredAt estimatedDelivery deliveryAddress items')
+      .select('orderId status paymentStatus shippedAt deliveredAt estimatedDelivery deliveryAddress items tax')
       .populate('buyer', 'name email phone')
       .populate('items.vendorId', 'businessName');
 
@@ -698,6 +709,7 @@ const trackOrder = async (req, res) => {
     }
 
     debugLog('Order found for tracking:', orderId);
+    debugLog('Order tax amount:', order.tax); // Should be 0
 
     // Create tracking timeline
     const timeline = [];
@@ -767,6 +779,8 @@ const trackOrder = async (req, res) => {
         estimatedDelivery: order.estimatedDelivery,
         shippedAt: order.shippedAt,
         deliveredAt: order.deliveredAt,
+        tax: order.tax, // Should be 0
+        taxIncluded: order.tax > 0, // Should be false
         deliveryAddress: {
           city: order.deliveryAddress.city,
           street: order.deliveryAddress.street
@@ -839,7 +853,8 @@ const updatePaymentStatus = async (req, res) => {
     debugLog('Order found:', {
       orderId: order.orderId,
       currentPaymentStatus: order.paymentStatus,
-      newPaymentStatus: paymentStatus
+      newPaymentStatus: paymentStatus,
+      tax: order.tax // Should be 0
     });
 
     // Only admin can update payment status
@@ -877,6 +892,7 @@ const updatePaymentStatus = async (req, res) => {
         paymentStatus: order.paymentStatus,
         previousPaymentStatus: oldPaymentStatus,
         totalAmount: order.totalAmount,
+        tax: order.tax, // Should be 0
         updatedAt: order.updatedAt
       }
     });
@@ -923,7 +939,8 @@ const cancelOrder = async (req, res) => {
       orderId: order.orderId,
       currentStatus: order.status,
       buyerId: order.buyer.toString(),
-      currentUserId: req.user.id
+      currentUserId: req.user.id,
+      tax: order.tax // Should be 0
     });
 
     // Check authorization
@@ -978,7 +995,8 @@ const cancelOrder = async (req, res) => {
         orderId: order.orderId,
         status: order.status,
         cancellationReason: order.cancellationReason,
-        cancelledAt: order.cancelledAt
+        cancelledAt: order.cancelledAt,
+        tax: order.tax // Should be 0
       }
     });
 
@@ -1067,6 +1085,7 @@ const getVendorOrders = async (req, res) => {
       orderObj.vendorSubtotal = vendorSubtotal;
       orderObj.vendorCommission = vendorCommission;
       orderObj.vendorAmount = vendorAmount;
+      orderObj.tax = order.tax; // Should be 0
       
       return orderObj;
     });
@@ -1205,13 +1224,14 @@ const getAdminOrders = async (req, res) => {
     debugLog('Admin orders found:', orders.length);
     debugLog('Total admin orders:', total);
 
-    // Calculate admin statistics (updated to remove tax from revenue calculation)
+    // Calculate admin statistics (NO TAX in revenue calculation)
     const stats = await Order.aggregate([
       {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$subtotal' }, // Changed from totalAmount to subtotal (no tax)
+          totalRevenue: { $sum: '$subtotal' }, // NO TAX included
+          totalTax: { $sum: '$tax' }, // Should always be 0
           totalShipping: { $sum: '$shippingFee' },
           totalCommission: { $sum: { $multiply: ['$subtotal', 0.15] } },
           pendingOrders: {
@@ -1233,6 +1253,7 @@ const getAdminOrders = async (req, res) => {
     const statsResult = stats[0] || {
       totalOrders: 0,
       totalRevenue: 0,
+      totalTax: 0, // Should always be 0
       totalShipping: 0,
       totalCommission: 0,
       pendingOrders: 0,
