@@ -40,6 +40,20 @@ const ProductSchema = new mongoose.Schema({
     min: [0, 'Cost price cannot be negative'],
     set: v => v ? parseFloat(v.toFixed(2)) : null
   },
+  wholesalePrice: {
+    type: Number,
+    min: [0, 'Wholesale price cannot be negative'],
+    set: v => v ? parseFloat(v.toFixed(2)) : null
+  },
+  minWholesaleQuantity: {
+    type: Number,
+    min: [1, 'Minimum wholesale quantity must be at least 1'],
+    default: 10
+  },
+  allowWholesale: {
+    type: Boolean,
+    default: false
+  },
   stock: {
     type: Number,
     required: [true, 'Stock is required'],
@@ -245,14 +259,14 @@ const ProductSchema = new mongoose.Schema({
   timestamps: true,
   toJSON: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.__v;
       return ret;
     }
   },
   toObject: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.__v;
       return ret;
     }
@@ -266,24 +280,24 @@ ProductSchema.virtual('reviews', {
   justOne: false
 });
 
-ProductSchema.virtual('isOnSale').get(function() {
+ProductSchema.virtual('isOnSale').get(function () {
   return this.comparePrice && this.comparePrice > this.price;
 });
 
-ProductSchema.virtual('discountPercentage').get(function() {
+ProductSchema.virtual('discountPercentage').get(function () {
   if (!this.comparePrice || this.comparePrice <= this.price) return 0;
   return Math.round(((this.comparePrice - this.price) / this.comparePrice) * 100);
 });
 
-ProductSchema.virtual('isInStock').get(function() {
+ProductSchema.virtual('isInStock').get(function () {
   return this.stock > 0;
 });
 
-ProductSchema.virtual('isLowStock').get(function() {
+ProductSchema.virtual('isLowStock').get(function () {
   return this.stock > 0 && this.stock <= 10;
 });
 
-ProductSchema.pre('save', function(next) {
+ProductSchema.pre('save', function (next) {
   if (this.isModified('title')) {
     this.slug = this.title
       .toLowerCase()
@@ -308,7 +322,7 @@ ProductSchema.pre('save', function(next) {
   next();
 });
 
-ProductSchema.pre('validate', function(next) {
+ProductSchema.pre('validate', function (next) {
   if (this.images && this.images.length === 0) {
     next(new Error('At least one image is required'));
   }

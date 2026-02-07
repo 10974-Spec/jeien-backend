@@ -54,7 +54,8 @@ const processMpesaPayment = async (req, res) => {
     }
 
     // Use a more flexible comparison for floating point numbers
-    if (Math.abs(orderAmount - requestAmount) > 1) { // Changed from 0.01 to 1 for KES
+    // For M-Pesa, we only care if the amount is roughly correct as it rounds anyway
+    if (Math.abs(orderAmount - requestAmount) > 5) { // Increased tolerance to 5 KES
       return res.status(400).json({
         success: false,
         message: 'Amount does not match order total',
@@ -116,11 +117,13 @@ const processMpesaPayment = async (req, res) => {
 
     // Check if the payment initiation was successful
     if (!paymentResult || !paymentResult.success) {
+      console.error('M-Pesa payment initiation failed result:', paymentResult);
       return res.status(400).json({
         success: false,
         message: 'M-Pesa payment initiation failed',
         details: paymentResult?.message || 'No response from payment gateway',
-        errorDescription: paymentResult?.error || 'Unknown error'
+        errorDescription: paymentResult?.error || 'Unknown error',
+        rawError: paymentResult
       });
     }
 

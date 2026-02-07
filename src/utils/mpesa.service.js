@@ -109,7 +109,14 @@ class MpesaService {
             const password = this.generatePassword(timestamp);
 
             // Set callback URL (use provided or default from env)
-            const finalCallbackUrl = callbackUrl || `${process.env.API_URL}/api/payments/mpesa/callback`;
+            // M-Pesa requires a valid URL. If we are on localhost, use a placeholder that passes format validation
+            // In production, this MUST be a valid https URL reachable by Safaricom
+            let finalCallbackUrl = callbackUrl || `${process.env.API_URL}/api/payments/mpesa/callback`;
+
+            if (!finalCallbackUrl || finalCallbackUrl.includes('localhost') || finalCallbackUrl.includes('127.0.0.1')) {
+                console.warn('⚠️ Warning: specific callback URL not set or is localhost. Using a placeholder for sandbox testing.');
+                finalCallbackUrl = 'https://jeien-backend.onrender.com/api/payments/mpesa/callback'; // Use production/staging URL or a valid dummy
+            }
 
             console.log('Callback URL:', finalCallbackUrl);
             console.log('Timestamp:', timestamp);
@@ -132,31 +139,76 @@ class MpesaService {
             console.log('STK Push request data:', JSON.stringify(requestData, null, 2));
 
             // Send STK push request
-            const response = await axios.post(
-                `${this.baseURL}/mpesa/stkpush/v1/processrequest`,
-                requestData,
-                {
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json'
+            try {
+                const response = await axios.post(
+                    `${this.baseURL}/mpesa/stkpush/v1/processrequest`,
+                    requestData,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json'
+                        }
                     }
-                }
-            );
+                );
 
-            console.log('✅ STK Push initiated successfully');
-            console.log('Response:', JSON.stringify(response.data, null, 2));
+                console.log('✅ STK Push initiated successfully');
+                console.log('Response:', JSON.stringify(response.data, null, 2));
 
-            return {
-                success: true,
-                message: 'STK push sent successfully',
-                data: {
-                    MerchantRequestID: response.data.MerchantRequestID,
-                    CheckoutRequestID: response.data.CheckoutRequestID,
-                    ResponseCode: response.data.ResponseCode,
-                    ResponseDescription: response.data.ResponseDescription,
-                    CustomerMessage: response.data.CustomerMessage
+                return {
+                    success: true,
+                    message: 'STK push sent successfully',
+                    data: {
+                        MerchantRequestID: response.data.MerchantRequestID,
+                        CheckoutRequestID: response.data.CheckoutRequestID,
+                        ResponseCode: response.data.ResponseCode,
+                        ResponseDescription: response.data.ResponseDescription,
+                        CustomerMessage: response.data.CustomerMessage
+                    }
+                };
+            } catch (error) {
+                // Check if error is due to invalid token (401 or specific 404 code)
+                const errorCode = error.response?.data?.errorCode;
+                const isAuthError = error.response?.status === 401 ||
+                    (error.response?.status === 404 && errorCode === '404.001.03'); // Invalid Access Token
+
+                if (isAuthError) {
+                    console.log('⚠️ Access token invalid or expired. Invalidating cache and retrying...');
+                    this.accessToken = null;
+                    this.tokenExpiry = null;
+
+                    // Recursive call with new token (one retry only usually safer, but for now exact logic)
+                    // Better to just fetch new token and retry here to avoid infinite recursion risk without counter
+
+                    const newAccessToken = await this.getAccessToken();
+
+                    const retryResponse = await axios.post(
+                        `${this.baseURL}/mpesa/stkpush/v1/processrequest`,
+                        requestData,
+                        {
+                            headers: {
+                                Authorization: `Bearer ${newAccessToken}`,
+                                'Content-Type': 'application/json'
+                            }
+                        }
+                    );
+
+                    console.log('✅ STK Push retry successful');
+
+                    return {
+                        success: true,
+                        message: 'STK push sent successfully',
+                        data: {
+                            MerchantRequestID: retryResponse.data.MerchantRequestID,
+                            CheckoutRequestID: retryResponse.data.CheckoutRequestID,
+                            ResponseCode: retryResponse.data.ResponseCode,
+                            ResponseDescription: retryResponse.data.ResponseDescription,
+                            CustomerMessage: retryResponse.data.CustomerMessage
+                        }
+                    };
                 }
-            };
+
+                throw error; // Re-throw if not auth error or if retry failed
+            }
         } catch (error) {
             console.error('❌ STK Push failed:', error.response?.data || error.message);
 
@@ -164,7 +216,8 @@ class MpesaService {
             return {
                 success: false,
                 message: error.response?.data?.errorMessage || error.message || 'Failed to initiate payment',
-                error: error.response?.data || { message: error.message }
+                error: error.response?.data || { message: error.message },
+                raw: error.toJSON ? error.toJSON() : error
             };
         }
     }
