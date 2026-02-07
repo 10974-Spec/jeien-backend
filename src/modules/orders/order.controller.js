@@ -24,11 +24,11 @@ const createOrder = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { 
-      items, 
-      deliveryAddress, 
-      paymentMethod, 
-      customerNotes, 
+    const {
+      items,
+      deliveryAddress,
+      paymentMethod,
+      customerNotes,
       shippingMethod = 'Standard',
       vendorIds = [],
       applyFreeShipping = false, // Add this parameter
@@ -40,9 +40,9 @@ const createOrder = async (req, res) => {
       debugLog('ERROR: No items in order');
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Order must contain at least one item' 
+        message: 'Order must contain at least one item'
       });
     }
 
@@ -50,9 +50,9 @@ const createOrder = async (req, res) => {
       debugLog('ERROR: Delivery address is required');
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Delivery address is required' 
+        message: 'Delivery address is required'
       });
     }
 
@@ -62,7 +62,7 @@ const createOrder = async (req, res) => {
       debugLog('ERROR: Missing required address fields');
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         message: 'Please provide full name, phone, city, and street address',
         missingFields: {
@@ -75,7 +75,7 @@ const createOrder = async (req, res) => {
     }
 
     debugLog('Processing order items...');
-    
+
     // Fetch product details and validate stock
     const orderItems = [];
     let subtotal = 0;
@@ -86,7 +86,7 @@ const createOrder = async (req, res) => {
         debugLog('ERROR: Item missing productId or quantity', item);
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
           message: 'Each item must have productId and quantity',
           invalidItem: item
@@ -103,7 +103,7 @@ const createOrder = async (req, res) => {
         debugLog('ERROR: Product not found', item.productId);
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
           message: `Product not found: ${item.productId}`,
           productId: item.productId
@@ -114,7 +114,7 @@ const createOrder = async (req, res) => {
         debugLog('ERROR: Product not approved', item.productId);
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
           message: `Product "${product.title}" is not approved for sale`,
           productId: item.productId
@@ -129,7 +129,7 @@ const createOrder = async (req, res) => {
         });
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
           message: `Insufficient stock for "${product.title}". Available: ${product.stock}, Requested: ${item.quantity}`,
           productId: item.productId,
@@ -140,7 +140,7 @@ const createOrder = async (req, res) => {
 
       // FIXED: Proper price parsing - check if price is already multiplied
       let price = parseFloat(item.price) || parseFloat(product.price);
-      
+
       // Debug log to see what price we're getting
       debugLog('Price details:', {
         itemPrice: item.price,
@@ -187,7 +187,7 @@ const createOrder = async (req, res) => {
       debugLog('ERROR: Subtotal must be greater than 0', { subtotal });
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         message: 'Order subtotal must be greater than 0',
         subtotal: subtotal
@@ -197,17 +197,17 @@ const createOrder = async (req, res) => {
     // Calculate totals with proper rounding (NO TAX for buyers)
     subtotal = parseFloat(subtotal.toFixed(2));
     const tax = 0; // ZERO TAX - NO TAX FOR BUYERS
-    
+
     // Calculate shipping based on rules
     let shipping = 0; // Default to free shipping
-    
+
     // Only apply shipping fee if:
     // 1. NOT applying free shipping AND
     // 2. Subtotal is less than free shipping threshold
     if (!applyFreeShipping && subtotal < 5000) {
       shipping = shippingMethod === 'Express' ? 1000 : 500;
     }
-    
+
     // Calculate total amount (NO TAX included)
     const totalAmount = parseFloat((subtotal + shipping).toFixed(2));
 
@@ -226,7 +226,7 @@ const createOrder = async (req, res) => {
       debugLog('ERROR: Total amount exceeds reasonable limit', { totalAmount });
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         message: 'Order amount is too high. Maximum order amount is KES 150,000.',
         totalAmount: totalAmount,
@@ -236,7 +236,7 @@ const createOrder = async (req, res) => {
 
     // Generate unique order ID
     const orderId = `ORD-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-    
+
     debugLog('Generated order ID:', orderId);
 
     // Create order object (NO TAX included)
@@ -306,7 +306,7 @@ const createOrder = async (req, res) => {
     // Update user's order history
     await User.findByIdAndUpdate(req.user.id, {
       $push: { orderHistory: order._id },
-      $inc: { 
+      $inc: {
         'stats.totalOrders': 1,
         'stats.totalSpent': order.totalAmount
       }
@@ -317,6 +317,53 @@ const createOrder = async (req, res) => {
     session.endSession();
 
     debugLog('=== CREATE ORDER COMPLETED SUCCESSFULLY ===');
+
+    // Trigger M-Pesa STK Push if payment method is MPESA
+    let mpesaResponse = null;
+    if (paymentMethod === 'MPESA' || paymentMethod === 'M-PESA') {
+      debugLog('Initiating M-Pesa STK Push...');
+
+      try {
+        const mpesaService = require('../../utils/mpesa.service');
+
+        // Get buyer's phone number
+        const buyer = await User.findById(req.user.id).select('phone');
+        const phoneNumber = deliveryAddress.phone || buyer?.phone;
+
+        if (!phoneNumber) {
+          debugLog('WARNING: No phone number available for M-Pesa');
+        } else {
+          mpesaResponse = await mpesaService.initiateSTKPush({
+            phoneNumber: phoneNumber,
+            amount: order.totalAmount,
+            accountReference: order.orderId,
+            transactionDesc: `Payment for order ${order.orderId}`,
+            callbackUrl: `${process.env.API_URL}/api/payments/mpesa/callback`
+          });
+
+          debugLog('M-Pesa STK Push response:', mpesaResponse);
+
+          // Update order with M-Pesa details
+          if (mpesaResponse.success) {
+            order.paymentDetails = {
+              provider: 'MPESA',
+              merchantRequestID: mpesaResponse.data.MerchantRequestID,
+              checkoutRequestID: mpesaResponse.data.CheckoutRequestID,
+              responseCode: mpesaResponse.data.ResponseCode,
+              responseDescription: mpesaResponse.data.ResponseDescription
+            };
+            await order.save();
+            debugLog('✅ M-Pesa STK Push sent successfully');
+          } else {
+            debugLog('❌ M-Pesa STK Push failed:', mpesaResponse.message);
+          }
+        }
+      } catch (mpesaError) {
+        debugLog('M-Pesa STK Push error:', mpesaError.message);
+        // Don't fail the order creation if M-Pesa fails
+        // The order is already created, payment can be retried
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -351,36 +398,44 @@ const createOrder = async (req, res) => {
         amount: order.totalAmount,
         currency: 'KES',
         taxIncluded: false // Confirm NO TAX in payment
-      }
+      },
+      mpesa: mpesaResponse ? {
+        stkPushSent: mpesaResponse.success,
+        message: mpesaResponse.success
+          ? 'Please check your phone to complete payment'
+          : mpesaResponse.message,
+        checkoutRequestID: mpesaResponse.data?.CheckoutRequestID,
+        merchantRequestID: mpesaResponse.data?.MerchantRequestID
+      } : null
     });
 
   } catch (error) {
     // Abort transaction on error
     await session.abortTransaction();
     session.endSession();
-    
+
     debugLog('=== CREATE ORDER ERROR ===');
     debugLog('Error name:', error.name);
     debugLog('Error message:', error.message);
     debugLog('Error stack:', error.stack);
-    
+
     if (error.name === 'ValidationError') {
       debugLog('Mongoose Validation Errors:', error.errors);
       const validationErrors = {};
       Object.keys(error.errors).forEach(key => {
         validationErrors[key] = error.errors[key].message;
       });
-      
+
       return res.status(400).json({
         success: false,
         message: 'Order validation failed',
         errors: validationErrors
       });
     }
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       success: false,
-      message: 'Failed to create order', 
+      message: 'Failed to create order',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -396,9 +451,9 @@ const getOrderById = async (req, res) => {
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       debugLog('ERROR: Invalid order ID format');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Invalid order ID format' 
+        message: 'Invalid order ID format'
       });
     }
 
@@ -409,9 +464,9 @@ const getOrderById = async (req, res) => {
 
     if (!order) {
       debugLog('ERROR: Order not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Order not found' 
+        message: 'Order not found'
       });
     }
 
@@ -430,9 +485,9 @@ const getOrderById = async (req, res) => {
 
     if (!isBuyer && !isVendor && !isAdmin) {
       debugLog('ERROR: Unauthorized access to order');
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
-        message: 'Not authorized to view this order' 
+        message: 'Not authorized to view this order'
       });
     }
 
@@ -442,7 +497,7 @@ const getOrderById = async (req, res) => {
         const product = await Product.findById(item.productId)
           .select('title images sku brand description category')
           .populate('category', 'name slug');
-        
+
         return {
           ...item.toObject(),
           product: {
@@ -472,9 +527,9 @@ const getOrderById = async (req, res) => {
 
   } catch (error) {
     debugLog('Get order error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to get order', 
+      message: 'Failed to get order',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -486,8 +541,8 @@ const getUserOrders = async (req, res) => {
   debugLog('Query params:', req.query);
 
   try {
-    const { 
-      page = 1, 
+    const {
+      page = 1,
       limit = 20,
       status,
       paymentStatus,
@@ -537,9 +592,9 @@ const getUserOrders = async (req, res) => {
 
   } catch (error) {
     debugLog('Get user orders error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to get orders', 
+      message: 'Failed to get orders',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -557,26 +612,26 @@ const updateOrderStatus = async (req, res) => {
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       debugLog('ERROR: Invalid order ID format');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Invalid order ID format' 
+        message: 'Invalid order ID format'
       });
     }
 
     if (!status) {
       debugLog('ERROR: Status is required');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Status is required' 
+        message: 'Status is required'
       });
     }
 
     const validStatuses = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED'];
     if (!validStatuses.includes(status)) {
       debugLog('ERROR: Invalid status value');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` 
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
       });
     }
 
@@ -585,9 +640,9 @@ const updateOrderStatus = async (req, res) => {
 
     if (!order) {
       debugLog('ERROR: Order not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Order not found' 
+        message: 'Order not found'
       });
     }
 
@@ -606,25 +661,25 @@ const updateOrderStatus = async (req, res) => {
     // Buyers can only cancel their own orders
     if (isBuyer && status !== 'CANCELLED') {
       debugLog('ERROR: Buyers can only cancel orders');
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
-        message: 'Buyers can only cancel orders' 
+        message: 'Buyers can only cancel orders'
       });
     }
 
     // Only admin/vendor can update to other statuses
     if (!isAdmin && !isVendor && !isBuyer) {
       debugLog('ERROR: Not authorized to update order status');
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
-        message: 'Not authorized to update order status' 
+        message: 'Not authorized to update order status'
       });
     }
 
     // Update order status
     const oldStatus = order.status;
     order.status = status;
-    
+
     if (notes) {
       order.statusNotes = order.statusNotes || [];
       order.statusNotes.push({
@@ -644,7 +699,7 @@ const updateOrderStatus = async (req, res) => {
     } else if (status === 'CANCELLED') {
       order.cancelledAt = new Date();
       order.cancelledBy = req.user.id;
-      
+
       // Restore product stock if order is cancelled
       if (oldStatus !== 'CANCELLED') {
         debugLog('Restoring product stock for cancelled order...');
@@ -679,9 +734,9 @@ const updateOrderStatus = async (req, res) => {
 
   } catch (error) {
     debugLog('Update order status error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to update order status', 
+      message: 'Failed to update order status',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -702,9 +757,9 @@ const trackOrder = async (req, res) => {
 
     if (!order) {
       debugLog('ERROR: Order not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Order not found' 
+        message: 'Order not found'
       });
     }
 
@@ -713,7 +768,7 @@ const trackOrder = async (req, res) => {
 
     // Create tracking timeline
     const timeline = [];
-    
+
     timeline.push({
       status: 'ORDER_PLACED',
       date: order.createdAt,
@@ -796,9 +851,9 @@ const trackOrder = async (req, res) => {
 
   } catch (error) {
     debugLog('Track order error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to track order', 
+      message: 'Failed to track order',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -816,26 +871,26 @@ const updatePaymentStatus = async (req, res) => {
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       debugLog('ERROR: Invalid order ID format');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Invalid order ID format' 
+        message: 'Invalid order ID format'
       });
     }
 
     if (!paymentStatus) {
       debugLog('ERROR: Payment status is required');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Payment status is required' 
+        message: 'Payment status is required'
       });
     }
 
     const validPaymentStatuses = ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'REFUNDED'];
     if (!validPaymentStatuses.includes(paymentStatus)) {
       debugLog('ERROR: Invalid payment status');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: `Invalid payment status. Must be one of: ${validPaymentStatuses.join(', ')}` 
+        message: `Invalid payment status. Must be one of: ${validPaymentStatuses.join(', ')}`
       });
     }
 
@@ -844,9 +899,9 @@ const updatePaymentStatus = async (req, res) => {
 
     if (!order) {
       debugLog('ERROR: Order not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Order not found' 
+        message: 'Order not found'
       });
     }
 
@@ -860,9 +915,9 @@ const updatePaymentStatus = async (req, res) => {
     // Only admin can update payment status
     if (req.user.role !== 'ADMIN') {
       debugLog('ERROR: Only admin can update payment status');
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
-        message: 'Only admin can update payment status' 
+        message: 'Only admin can update payment status'
       });
     }
 
@@ -873,7 +928,7 @@ const updatePaymentStatus = async (req, res) => {
     if (paymentStatus === 'COMPLETED') {
       order.paymentDetails = order.paymentDetails || {};
       order.paymentDetails.paidAt = new Date();
-      
+
       if (transactionId) order.paymentDetails.transactionId = transactionId;
       if (reference) order.paymentDetails.reference = reference;
       if (notes) order.paymentDetails.notes = notes;
@@ -899,9 +954,9 @@ const updatePaymentStatus = async (req, res) => {
 
   } catch (error) {
     debugLog('Update payment status error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to update payment status', 
+      message: 'Failed to update payment status',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -918,9 +973,9 @@ const cancelOrder = async (req, res) => {
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       debugLog('ERROR: Invalid order ID format');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Invalid order ID format' 
+        message: 'Invalid order ID format'
       });
     }
 
@@ -929,9 +984,9 @@ const cancelOrder = async (req, res) => {
 
     if (!order) {
       debugLog('ERROR: Order not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Order not found' 
+        message: 'Order not found'
       });
     }
 
@@ -949,9 +1004,9 @@ const cancelOrder = async (req, res) => {
 
     if (!isBuyer && !isAdmin) {
       debugLog('ERROR: Not authorized to cancel order');
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
-        message: 'Not authorized to cancel this order' 
+        message: 'Not authorized to cancel this order'
       });
     }
 
@@ -959,7 +1014,7 @@ const cancelOrder = async (req, res) => {
     const cannotCancelStatuses = ['SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED'];
     if (cannotCancelStatuses.includes(order.status)) {
       debugLog('ERROR: Order cannot be cancelled in current status');
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         message: `Cannot cancel order with status: ${order.status}`,
         currentStatus: order.status
@@ -1002,9 +1057,9 @@ const cancelOrder = async (req, res) => {
 
   } catch (error) {
     debugLog('Cancel order error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to cancel order', 
+      message: 'Failed to cancel order',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -1016,8 +1071,8 @@ const getVendorOrders = async (req, res) => {
   debugLog('Query params:', req.query);
 
   try {
-    const { 
-      page = 1, 
+    const {
+      page = 1,
       limit = 20,
       status,
       paymentStatus,
@@ -1068,17 +1123,17 @@ const getVendorOrders = async (req, res) => {
 
     // Filter items to only show this vendor's items
     const filteredOrders = orders.map(order => {
-      const vendorItems = order.items.filter(item => 
+      const vendorItems = order.items.filter(item =>
         item.vendorId && item.vendorId.toString() === req.user.id
       );
-      
+
       const orderObj = order.toObject();
       orderObj.items = vendorItems;
-      
-      const vendorSubtotal = vendorItems.reduce((sum, item) => 
+
+      const vendorSubtotal = vendorItems.reduce((sum, item) =>
         sum + (item.price * item.quantity), 0
       );
-      
+
       const vendorCommission = parseFloat((vendorSubtotal * 0.15).toFixed(2));
       const vendorAmount = parseFloat((vendorSubtotal - vendorCommission).toFixed(2));
 
@@ -1086,7 +1141,7 @@ const getVendorOrders = async (req, res) => {
       orderObj.vendorCommission = vendorCommission;
       orderObj.vendorAmount = vendorAmount;
       orderObj.tax = order.tax; // Should be 0
-      
+
       return orderObj;
     });
 
@@ -1140,9 +1195,9 @@ const getVendorOrders = async (req, res) => {
 
   } catch (error) {
     debugLog('Get vendor orders error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to get vendor orders', 
+      message: 'Failed to get vendor orders',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -1154,8 +1209,8 @@ const getAdminOrders = async (req, res) => {
   debugLog('Query params:', req.query);
 
   try {
-    const { 
-      page = 1, 
+    const {
+      page = 1,
       limit = 50,
       status,
       paymentStatus,
@@ -1278,9 +1333,9 @@ const getAdminOrders = async (req, res) => {
 
   } catch (error) {
     debugLog('Get admin orders error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to get orders', 
+      message: 'Failed to get orders',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -1295,9 +1350,9 @@ const searchOrders = async (req, res) => {
     const { q, limit = 10 } = req.query;
 
     if (!q || q.trim().length < 2) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Search query must be at least 2 characters' 
+        message: 'Search query must be at least 2 characters'
       });
     }
 
@@ -1348,9 +1403,9 @@ const searchOrders = async (req, res) => {
 
   } catch (error) {
     debugLog('Search orders error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to search orders', 
+      message: 'Failed to search orders',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }

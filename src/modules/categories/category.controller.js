@@ -45,16 +45,16 @@ const createCategory = async (req, res) => {
       .replace(/\s+/g, '-')
       .replace(/-+/g, '-')
       .trim();
-    
+
     debugLog('Generated slug:', generatedSlug);
 
     // Check for existing category - FIXED: Use case-insensitive comparison
     debugLog('Checking for existing category with same name or slug...');
-    
+
     // Create a regex for case-insensitive search
     const nameRegex = new RegExp(`^${trimmedName}$`, 'i');
     const slugRegex = new RegExp(`^${generatedSlug}$`, 'i');
-    
+
     const existingCategory = await Category.findOne({
       $or: [
         { name: { $regex: nameRegex } },
@@ -68,7 +68,7 @@ const createCategory = async (req, res) => {
         existingName: existingCategory.name,
         existingSlug: existingCategory.slug
       });
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'Category name already exists',
         existingCategory: {
           _id: existingCategory._id,
@@ -82,23 +82,23 @@ const createCategory = async (req, res) => {
     let parentId = null;
     if (parent && parent !== 'null' && parent !== '') {
       debugLog('Validating parent category:', parent);
-      
+
       if (!mongoose.Types.ObjectId.isValid(parent)) {
         debugLog('ERROR: Invalid parent category ID format:', parent);
         return res.status(400).json({ message: 'Invalid parent category ID format' });
       }
-      
+
       const parentCategory = await Category.findById(parent);
       if (!parentCategory) {
         debugLog('ERROR: Parent category not found:', parent);
         return res.status(400).json({ message: 'Parent category not found' });
       }
-      
+
       if (!parentCategory.active) {
         debugLog('ERROR: Parent category is not active');
         return res.status(400).json({ message: 'Parent category is not active' });
       }
-      
+
       parentId = parent;
       debugLog('Parent category validated:', {
         id: parentCategory._id,
@@ -157,7 +157,7 @@ const createCategory = async (req, res) => {
           debugLog('ERROR: File buffer is empty');
           return res.status(400).json({ message: 'Uploaded file is empty' });
         }
-        
+
         debugLog('Calling uploadSingleImage...');
         const imageUrl = await uploadSingleImage(req.file, 'categories');
         debugLog('Image uploaded successfully:', imageUrl);
@@ -165,8 +165,8 @@ const createCategory = async (req, res) => {
       } catch (uploadError) {
         debugLog('ERROR uploading image:', uploadError.message);
         debugLog('ERROR stack:', uploadError.stack);
-        return res.status(400).json({ 
-          message: 'Failed to upload image', 
+        return res.status(400).json({
+          message: 'Failed to upload image',
           error: uploadError.message,
           details: process.env.NODE_ENV === 'development' ? uploadError.stack : undefined
         });
@@ -185,7 +185,7 @@ const createCategory = async (req, res) => {
     });
 
     debugLog('=== CREATE CATEGORY COMPLETED SUCCESSFULLY ===');
-    
+
     res.status(201).json({
       message: 'Category created successfully',
       category: {
@@ -205,14 +205,14 @@ const createCategory = async (req, res) => {
     debugLog('Error name:', error.name);
     debugLog('Error message:', error.message);
     debugLog('Error stack:', error.stack);
-    
+
     if (error.name === 'ValidationError') {
       debugLog('Mongoose Validation Errors:', error.errors);
       const validationErrors = {};
       Object.keys(error.errors).forEach(key => {
         validationErrors[key] = error.errors[key].message;
       });
-      
+
       return res.status(400).json({
         message: 'Category validation failed',
         errors: validationErrors,
@@ -222,7 +222,7 @@ const createCategory = async (req, res) => {
         }
       });
     }
-    
+
     if (error.name === 'MongoError' && error.code === 11000) {
       debugLog('Duplicate key error:', error.keyValue);
       return res.status(400).json({
@@ -232,7 +232,7 @@ const createCategory = async (req, res) => {
       });
     }
 
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Failed to create category',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
@@ -253,7 +253,7 @@ const getAllCategories = async (req, res) => {
       featured,
       active,
       search,
-      sortBy = 'sortOrder',
+      sortBy = 'name',
       sortOrder = 'asc'
     } = req.query;
 
@@ -287,7 +287,7 @@ const getAllCategories = async (req, res) => {
       filter.featured = featured === 'true';
       debugLog('Filter: featured =', filter.featured);
     }
-    
+
     if (active !== undefined) {
       filter.active = active === 'true';
       debugLog('Filter: active =', filter.active);
@@ -315,7 +315,7 @@ const getAllCategories = async (req, res) => {
       .limit(parseInt(limit));
 
     const total = await Category.countDocuments(filter);
-    
+
     debugLog('Categories found:', categories.length);
     debugLog('Total categories:', total);
 
@@ -331,7 +331,7 @@ const getAllCategories = async (req, res) => {
           category: { $in: categoryIds },
           approved: true
         });
-        
+
         const vendorsCount = await Product.distinct('vendor', {
           category: { $in: categoryIds },
           approved: true
@@ -349,7 +349,7 @@ const getAllCategories = async (req, res) => {
     );
 
     debugLog('=== GET ALL CATEGORIES COMPLETED ===');
-    
+
     res.json({
       categories: categoriesWithStats,
       pagination: {
@@ -362,8 +362,8 @@ const getAllCategories = async (req, res) => {
 
   } catch (error) {
     debugLog('Get all categories error:', error.message);
-    res.status(500).json({ 
-      message: 'Failed to get categories', 
+    res.status(500).json({
+      message: 'Failed to get categories',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -444,8 +444,8 @@ const getCategoryById = async (req, res) => {
 
   } catch (error) {
     debugLog('Get category error:', error.message);
-    res.status(500).json({ 
-      message: 'Failed to get category', 
+    res.status(500).json({
+      message: 'Failed to get category',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -503,7 +503,7 @@ const updateCategory = async (req, res) => {
     allowedUpdates.forEach(field => {
       if (updates[field] !== undefined) {
         debugLog(`Updating field "${field}":`, updates[field]);
-        
+
         if (field === 'name') {
           category[field] = updates[field].trim();
         } else if (field === 'parent') {
@@ -539,7 +539,7 @@ const updateCategory = async (req, res) => {
           debugLog('ERROR: File buffer is empty');
           return res.status(400).json({ message: 'Uploaded file is empty' });
         }
-        
+
         debugLog('Calling uploadSingleImage...');
         const imageUrl = await uploadSingleImage(req.file, 'categories');
         debugLog('New image uploaded:', imageUrl);
@@ -547,8 +547,8 @@ const updateCategory = async (req, res) => {
       } catch (uploadError) {
         debugLog('ERROR uploading image:', uploadError.message);
         debugLog('ERROR stack:', uploadError.stack);
-        return res.status(400).json({ 
-          message: 'Failed to upload image', 
+        return res.status(400).json({
+          message: 'Failed to upload image',
           error: uploadError.message,
           details: process.env.NODE_ENV === 'development' ? uploadError.stack : undefined
         });
@@ -577,8 +577,8 @@ const updateCategory = async (req, res) => {
 
   } catch (error) {
     debugLog('Update category error:', error.message);
-    res.status(500).json({ 
-      message: 'Failed to update category', 
+    res.status(500).json({
+      message: 'Failed to update category',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -617,7 +617,7 @@ const deleteCategory = async (req, res) => {
     if (hasChildren) {
       debugLog('ERROR: Category has child categories');
       const childCount = await Category.countDocuments({ parent: id });
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'Cannot delete category with subcategories.',
         childCount
       });
@@ -629,7 +629,7 @@ const deleteCategory = async (req, res) => {
     if (hasProducts) {
       debugLog('ERROR: Category has associated products');
       const productCount = await Product.countDocuments({ category: id });
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'Cannot delete category with products.',
         productCount
       });
@@ -639,7 +639,7 @@ const deleteCategory = async (req, res) => {
     await Category.findByIdAndDelete(id);
     debugLog('Category deleted successfully');
 
-    res.json({ 
+    res.json({
       message: 'Category deleted successfully',
       deletedCategory: {
         id: category._id,
@@ -649,8 +649,8 @@ const deleteCategory = async (req, res) => {
 
   } catch (error) {
     debugLog('Delete category error:', error.message);
-    res.status(500).json({ 
-      message: 'Failed to delete category', 
+    res.status(500).json({
+      message: 'Failed to delete category',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -675,7 +675,7 @@ const getCategoryProducts = async (req, res) => {
 
     if (id && id !== 'all') {
       debugLog('Getting products for specific category:', id);
-      
+
       if (!mongoose.Types.ObjectId.isValid(id)) {
         debugLog('ERROR: Invalid category ID format:', id);
         return res.status(400).json({ message: 'Invalid category ID format' });
@@ -755,8 +755,8 @@ const getCategoryProducts = async (req, res) => {
 
   } catch (error) {
     debugLog('Get category products error:', error.message);
-    res.status(500).json({ 
-      message: 'Failed to get category products', 
+    res.status(500).json({
+      message: 'Failed to get category products',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -775,7 +775,7 @@ const updateCategoryStats = async (req, res) => {
 
     const statsUpdatePromises = categories.map(async (category, index) => {
       debugLog(`Processing category ${index + 1}/${categories.length}: ${category.name}`);
-      
+
       const categoryIds = [category._id];
       const children = await Category.find({ parent: category._id }).select('_id');
       children.forEach(child => categoryIds.push(child._id));
@@ -792,7 +792,7 @@ const updateCategoryStats = async (req, res) => {
       ]);
 
       const totalSales = salesCount[0]?.totalSales || 0;
-      
+
       debugLog(`Category ${category.name} stats:`, {
         productsCount,
         vendorsCount: vendorsCount.length,
@@ -810,15 +810,15 @@ const updateCategoryStats = async (req, res) => {
     await Promise.all(statsUpdatePromises);
 
     debugLog('=== CATEGORY STATS UPDATE COMPLETED ===');
-    res.json({ 
+    res.json({
       message: 'Category stats updated successfully',
       categoriesUpdated: categories.length
     });
 
   } catch (error) {
     debugLog('Update category stats error:', error.message);
-    res.status(500).json({ 
-      message: 'Failed to update category stats', 
+    res.status(500).json({
+      message: 'Failed to update category stats',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -874,8 +874,8 @@ const getFeaturedCategories = async (req, res) => {
 
   } catch (error) {
     debugLog('Get featured categories error:', error.message);
-    res.status(500).json({ 
-      message: 'Failed to get featured categories', 
+    res.status(500).json({
+      message: 'Failed to get featured categories',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });

@@ -29,19 +29,20 @@ const createProduct = async (req, res) => {
     debugLog('Finding vendor for user:', req.user.id);
     const vendor = await Vendor.findOne({ user: req.user.id });
     debugLog('Vendor found:', vendor ? vendor._id : 'NOT FOUND');
-    
+
     if (!vendor) {
       debugLog('ERROR: Vendor not found for user:', req.user.id);
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    debugLog('Vendor status:', { 
+    debugLog('Vendor status:', {
       active: vendor.active,
       storeName: vendor.storeName,
-      _id: vendor._id 
+      _id: vendor._id
     });
 
-    if (!vendor.active) {
+    // Skip active check for admins - they should always be able to create products
+    if (!vendor.active && req.user.role !== 'ADMIN') {
       debugLog('ERROR: Vendor account is not active');
       return res.status(403).json({ message: 'Vendor account is not active' });
     }
@@ -69,7 +70,7 @@ const createProduct = async (req, res) => {
     debugLog('Category value:', category);
     debugLog('Category type:', typeof category);
     debugLog('Category trimmed:', category?.trim());
-    
+
     if (!category) {
       debugLog('ERROR: Category is missing from request');
       return res.status(400).json({ message: 'Category is required' });
@@ -78,14 +79,14 @@ const createProduct = async (req, res) => {
     // Validate ObjectId format
     const trimmedCategory = category.toString().trim();
     debugLog('Trimmed category:', trimmedCategory);
-    
+
     if (!mongoose.Types.ObjectId.isValid(trimmedCategory)) {
       debugLog('ERROR: Invalid ObjectId format', trimmedCategory);
       // List all available categories for debugging
       const allCategories = await Category.find({}, '_id name active').limit(10);
       debugLog('Available categories (first 10):', allCategories);
-      
-      return res.status(400).json({ 
+
+      return res.status(400).json({
         message: 'Invalid category ID format',
         error: 'Invalid ObjectId format',
         receivedCategory: trimmedCategory,
@@ -96,15 +97,15 @@ const createProduct = async (req, res) => {
     // Find category
     debugLog('Looking for category with ID:', trimmedCategory);
     const categoryExists = await Category.findById(trimmedCategory);
-    
+
     if (!categoryExists) {
       debugLog('ERROR: Category not found in database');
-      
+
       // Get all categories to show what's available
       const allCategories = await Category.find({}, '_id name active');
       debugLog('All categories in database:', allCategories);
-      
-      return res.status(400).json({ 
+
+      return res.status(400).json({
         message: 'Invalid category - category not found',
         receivedCategory: trimmedCategory,
         availableCategories: allCategories.map(c => ({ _id: c._id.toString(), name: c.name, active: c.active }))
@@ -120,7 +121,7 @@ const createProduct = async (req, res) => {
 
     if (!categoryExists.active) {
       debugLog('ERROR: Category is not active');
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'Category is not active',
         categoryName: categoryExists.name
       });
@@ -159,7 +160,7 @@ const createProduct = async (req, res) => {
       productData.sku = sku.trim().toUpperCase();
       debugLog('SKU set:', productData.sku);
     }
-    
+
     if (comparePrice && comparePrice.trim()) {
       productData.comparePrice = validatePrice(comparePrice);
       debugLog('Compare price set:', productData.comparePrice);
@@ -218,7 +219,7 @@ const createProduct = async (req, res) => {
     const uploadedImages = await uploadMultipleImages(req.files, 'products');
     debugLog(`Images uploaded successfully: ${uploadedImages.length} images`);
     debugLog('Image URLs:', uploadedImages);
-    
+
     product.images = uploadedImages;
 
     // Save product
@@ -240,12 +241,12 @@ const createProduct = async (req, res) => {
     debugLog('Vendor stats updated');
 
     // Send response
-    const responseMessage = req.user.role === 'ADMIN' ? 
-      'Product created successfully' : 
+    const responseMessage = req.user.role === 'ADMIN' ?
+      'Product created successfully' :
       'Product created. Waiting for approval.';
-    
+
     debugLog('=== CREATE PRODUCT COMPLETED SUCCESSFULLY ===');
-    
+
     res.status(201).json({
       message: responseMessage,
       product: {
@@ -263,14 +264,14 @@ const createProduct = async (req, res) => {
     debugLog('Error name:', error.name);
     debugLog('Error message:', error.message);
     debugLog('Error stack:', error.stack);
-    
+
     if (error.name === 'ValidationError') {
       debugLog('Mongoose Validation Errors:', error.errors);
       const validationErrors = {};
       Object.keys(error.errors).forEach(key => {
         validationErrors[key] = error.errors[key].message;
       });
-      
+
       return res.status(400).json({
         message: 'Product validation failed',
         errors: validationErrors,
@@ -282,7 +283,7 @@ const createProduct = async (req, res) => {
         }
       });
     }
-    
+
     if (error.name === 'MongoError' && error.code === 11000) {
       debugLog('Duplicate key error:', error.keyValue);
       return res.status(400).json({
@@ -292,7 +293,7 @@ const createProduct = async (req, res) => {
       });
     }
 
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Failed to create product',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
@@ -303,10 +304,10 @@ const createProduct = async (req, res) => {
 const getAllProducts = async (req, res) => {
   debugLog('=== GET ALL PRODUCTS ===');
   debugLog('Query parameters:', req.query);
-  
+
   try {
-    const { 
-      page = 1, 
+    const {
+      page = 1,
       limit = 20,
       category,
       vendor,
@@ -345,12 +346,12 @@ const getAllProducts = async (req, res) => {
         filter.approved = true;
       }
     }
-    
+
     debugLog('Approved filter:', filter.approved);
 
     if (category) {
       debugLog('Filtering by category:', category);
-      
+
       // Handle "all" category special case
       if (category === 'all') {
         debugLog('"all" category - no category filter applied');
@@ -375,12 +376,12 @@ const getAllProducts = async (req, res) => {
       debugLog('Filtering by vendor:', vendor);
       filter.vendor = vendor;
     }
-    
+
     if (featured !== undefined) {
       filter.featured = featured === 'true';
       debugLog('Featured filter:', filter.featured);
     }
-    
+
     if (inStock === 'true') {
       filter.stock = { $gt: 0 };
       debugLog('In stock filter: true');
@@ -431,7 +432,7 @@ const getAllProducts = async (req, res) => {
     // Handle sortBy properly
     const sortOptions = {};
     // Map frontend sort parameters to actual database fields
-    switch(sortBy) {
+    switch (sortBy) {
       case 'newest':
       case 'createdAt':
         sortOptions.createdAt = sortDirection;
@@ -510,10 +511,10 @@ const getAllProducts = async (req, res) => {
   } catch (error) {
     debugLog('Get all products error:', error.message);
     debugLog('Error stack:', error.stack);
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       success: false,
-      message: 'Failed to get products', 
+      message: 'Failed to get products',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
     });
   }
@@ -522,7 +523,7 @@ const getAllProducts = async (req, res) => {
 const getProductById = async (req, res) => {
   debugLog('=== GET PRODUCT BY ID ===');
   debugLog('Product ID:', req.params.id);
-  
+
   try {
     const { id } = req.params;
 
@@ -576,9 +577,9 @@ const getProductById = async (req, res) => {
       published: true,
       stock: { $gt: 0 }
     })
-    .limit(8)
-    .select('title price images slug stats.averageRating stats.views stats.sales')
-    .populate('vendor', 'storeName');
+      .limit(8)
+      .select('title price images slug stats.averageRating stats.views stats.sales')
+      .populate('vendor', 'storeName');
 
     // Find vendor's other products
     const vendorOtherProducts = await Product.find({
@@ -588,9 +589,9 @@ const getProductById = async (req, res) => {
       published: true,
       stock: { $gt: 0 }
     })
-    .limit(6)
-    .select('title price images slug')
-    .populate('category', 'name');
+      .limit(6)
+      .select('title price images slug')
+      .populate('category', 'name');
 
     debugLog('Similar products found:', similarProducts.length);
     debugLog('Vendor other products found:', vendorOtherProducts.length);
@@ -604,9 +605,9 @@ const getProductById = async (req, res) => {
 
   } catch (error) {
     debugLog('Get product error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to get product', 
+      message: 'Failed to get product',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -685,7 +686,7 @@ const updateProduct = async (req, res) => {
     for (const field of allowedUpdates) {
       if (updates[field] !== undefined && updates[field] !== null) {
         debugLog(`Updating field "${field}":`, updates[field]);
-        
+
         try {
           if (field === 'price' || field === 'comparePrice' || field === 'costPrice') {
             product[field] = validatePrice(updates[field]);
@@ -771,10 +772,10 @@ const updateProduct = async (req, res) => {
   } catch (error) {
     debugLog('Update product error:', error.message);
     debugLog('Error stack:', error.stack);
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       success: false,
-      message: 'Failed to update product', 
+      message: 'Failed to update product',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -837,9 +838,9 @@ const deleteProduct = async (req, res) => {
 
   } catch (error) {
     debugLog('Delete product error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to delete product', 
+      message: 'Failed to delete product',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -864,8 +865,8 @@ const getVendorProducts = async (req, res) => {
       totalProducts: vendor.stats?.totalProducts
     });
 
-    const { 
-      page = 1, 
+    const {
+      page = 1,
       limit = 20,
       approved,
       published,
@@ -885,12 +886,12 @@ const getVendorProducts = async (req, res) => {
       filter.approved = approved === 'true';
       debugLog('Approved filter:', filter.approved);
     }
-    
+
     if (published !== undefined) {
       filter.published = published === 'true';
       debugLog('Published filter:', filter.published);
     }
-    
+
     if (lowStock === 'true') {
       const threshold = vendor.settings?.lowStockThreshold || 10;
       filter.stock = { $gt: 0, $lte: threshold };
@@ -908,7 +909,7 @@ const getVendorProducts = async (req, res) => {
 
     // Map sortBy to actual database fields
     const sortOptions = {};
-    switch(sortBy) {
+    switch (sortBy) {
       case 'sales':
         sortOptions['stats.sales'] = sortDirection;
         break;
@@ -949,10 +950,12 @@ const getVendorProducts = async (req, res) => {
           lowStock: {
             $sum: {
               $cond: [
-                { $and: [
-                  { $gt: ['$stock', 0] },
-                  { $lte: ['$stock', vendor.settings?.lowStockThreshold || 10] }
-                ]},
+                {
+                  $and: [
+                    { $gt: ['$stock', 0] },
+                    { $lte: ['$stock', vendor.settings?.lowStockThreshold || 10] }
+                  ]
+                },
                 1,
                 0
               ]
@@ -988,9 +991,9 @@ const getVendorProducts = async (req, res) => {
 
   } catch (error) {
     debugLog('Get vendor products error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to get vendor products', 
+      message: 'Failed to get vendor products',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -1044,7 +1047,7 @@ const updateProductStock = async (req, res) => {
     } else if (action && quantity) {
       const qty = parseInt(quantity);
       debugLog(`Action: ${action}, Quantity: ${qty}, Current stock: ${product.stock}`);
-      
+
       if (action === 'increase') {
         product.stock += qty;
         debugLog(`Increased stock to ${product.stock}`);
@@ -1084,9 +1087,9 @@ const updateProductStock = async (req, res) => {
 
   } catch (error) {
     debugLog('Update product stock error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to update product stock', 
+      message: 'Failed to update product stock',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -1111,22 +1114,22 @@ const bulkUpdateProducts = async (req, res) => {
     const invalidIds = ids.filter(id => !mongoose.Types.ObjectId.isValid(id));
     if (invalidIds.length > 0) {
       debugLog('Invalid product IDs:', invalidIds);
-      return res.status(400).json({ 
-        message: 'Invalid product ID format(s)', 
-        invalidIds 
+      return res.status(400).json({
+        message: 'Invalid product ID format(s)',
+        invalidIds
       });
     }
 
     debugLog(`Processing ${ids.length} products...`);
     const products = await Product.find({ _id: { $in: ids } }).populate('vendor', 'user');
-    
-    const unauthorized = products.filter(p => 
+
+    const unauthorized = products.filter(p =>
       req.user.role !== 'ADMIN' && p.vendor.user.toString() !== req.user.id
     );
 
     if (unauthorized.length > 0) {
       debugLog('Unauthorized products found:', unauthorized.map(p => p._id));
-      return res.status(403).json({ 
+      return res.status(403).json({
         message: 'Not authorized to update some products',
         unauthorized: unauthorized.map(p => p._id)
       });
@@ -1154,7 +1157,7 @@ const bulkUpdateProducts = async (req, res) => {
     }
 
     debugLog('Bulk update data:', updateData);
-    
+
     const result = await Product.updateMany(
       { _id: { $in: ids } },
       { $set: updateData }
@@ -1177,9 +1180,9 @@ const bulkUpdateProducts = async (req, res) => {
 
   } catch (error) {
     debugLog('Bulk update products error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to bulk update products', 
+      message: 'Failed to bulk update products',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -1203,27 +1206,27 @@ const searchProducts = async (req, res) => {
     debugLog('Searching for:', query);
 
     const products = await Product.find(
-      { 
-        $text: { $search: query }, 
-        approved: true, 
-        published: true, 
-        stock: { $gt: 0 } 
+      {
+        $text: { $search: query },
+        approved: true,
+        published: true,
+        stock: { $gt: 0 }
       },
       { score: { $meta: 'textScore' } }
     )
-    .sort({ score: { $meta: 'textScore' } })
-    .limit(parseInt(limit))
-    .select('title price images slug category vendor stats.averageRating stats.sales stats.views')
-    .populate('category', 'name')
-    .populate('vendor', 'storeName');
+      .sort({ score: { $meta: 'textScore' } })
+      .limit(parseInt(limit))
+      .select('title price images slug category vendor stats.averageRating stats.sales stats.views')
+      .populate('category', 'name')
+      .populate('vendor', 'storeName');
 
     const categories = await Category.find(
       { $text: { $search: query }, active: true },
       { score: { $meta: 'textScore' } }
     )
-    .sort({ score: { $meta: 'textScore' } })
-    .limit(5)
-    .select('name slug image');
+      .sort({ score: { $meta: 'textScore' } })
+      .limit(5)
+      .select('name slug image');
 
     debugLog('Search results:', {
       products: products.length,
@@ -1239,9 +1242,9 @@ const searchProducts = async (req, res) => {
 
   } catch (error) {
     debugLog('Search products error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to search products', 
+      message: 'Failed to search products',
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });

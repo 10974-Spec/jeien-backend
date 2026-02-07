@@ -12,7 +12,7 @@ const register = async (req, res) => {
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        message: 'User already exists'                                                                    
+        message: 'User already exists'
       });
     }
 
@@ -142,7 +142,7 @@ const facebookAuth = async (req, res) => {
 const me = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -213,7 +213,7 @@ const updateProfileImage = async (req, res) => {
 
     const userId = req.user.id;
     const user = await User.findById(userId);
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -224,7 +224,7 @@ const updateProfileImage = async (req, res) => {
     // For now, just save the file path
     const imageUrl = `/uploads/profiles/${req.file.filename}`;
     user.profileImage = imageUrl;
-    
+
     await user.save();
 
     const userResponse = user.toObject();
