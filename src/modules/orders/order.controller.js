@@ -138,26 +138,17 @@ const createOrder = async (req, res) => {
         });
       }
 
-      // FIXED: Proper price parsing - check if price is already multiplied
-      let price = parseFloat(item.price) || parseFloat(product.price);
+      // Get price from item or product
+      const price = parseFloat(item.price) || parseFloat(product.price);
 
       // Debug log to see what price we're getting
       debugLog('Price details:', {
         itemPrice: item.price,
         productPrice: product.price,
-        parsedPrice: price,
+        finalPrice: price,
         isString: typeof item.price === 'string',
         isNumber: typeof item.price === 'number'
       });
-
-      // If price seems too high (like 20000 instead of 200), divide by 100
-      // This fixes the frontend bug where prices are multiplied by 100
-      if (price > 10000) { // If price seems unreasonably high for e-commerce
-        debugLog('WARNING: Price seems too high, checking for multiplication issue');
-        const reasonablePrice = price / 100;
-        debugLog(`Adjusted price from ${price} to ${reasonablePrice}`);
-        price = reasonablePrice;
-      }
 
       const itemTotal = price * item.quantity;
       subtotal += itemTotal;
