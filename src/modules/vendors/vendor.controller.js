@@ -328,6 +328,55 @@ const getAllVendors = async (req, res) => {
   }
 };
 
+const getVendorById = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    const vendor = await Vendor.findById(vendorId)
+      .populate('user', 'name email profileImage phone');
+
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    // Get vendor products count
+    const productsCount = await Product.countDocuments({ vendor: vendor._id });
+    const approvedProductsCount = await Product.countDocuments({ vendor: vendor._id, approved: true });
+
+    // Get recent orders
+    const recentOrders = await Order.find({ vendorIds: vendor._id })
+      .populate('buyer', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    // Get revenue stats
+    const revenueStats = await Order.aggregate([
+      { $match: { vendorIds: vendor._id, paymentStatus: 'COMPLETED' } },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$totalAmount' },
+          totalOrders: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.json({
+      vendor,
+      stats: {
+        totalProducts: productsCount,
+        approvedProducts: approvedProductsCount,
+        totalRevenue: revenueStats[0]?.totalRevenue || 0,
+        totalOrders: revenueStats[0]?.totalOrders || 0
+      },
+      recentOrders
+    });
+  } catch (error) {
+    console.error('Get vendor by ID error:', error);
+    res.status(500).json({ message: 'Failed to get vendor details', error: error.message });
+  }
+};
+
 const updateVendorStatus = async (req, res) => {
   try {
     const { vendorId } = req.params;
@@ -340,7 +389,7 @@ const updateVendorStatus = async (req, res) => {
 
     if (active !== undefined) {
       vendor.active = active;
-      
+
       if (vendor.user) {
         const user = await User.findById(vendor.user._id);
         if (user) {
@@ -395,9 +444,9 @@ const getPublicVendorProfile = async (req, res) => {
       approved: true,
       stock: { $gt: 0 }
     })
-    .sort({ createdAt: -1 })
-    .limit(12)
-    .select('title price images category');
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .select('title price images category');
 
     res.json({
       vendor,
@@ -423,6 +472,7 @@ module.exports = {
   updateBankDetails,
   getVendorStats,
   getAllVendors,
+  getVendorById,
   updateVendorStatus,
   getPublicVendorProfile
 };

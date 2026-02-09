@@ -11,6 +11,7 @@ const {
   updateBankDetails,
   getVendorStats,
   getAllVendors,
+  getVendorById,
   updateVendorStatus,
   getPublicVendorProfile
 } = require('./vendor.controller');
@@ -27,6 +28,7 @@ router.put('/bank-details', authenticate, vendorOrAdmin, updateBankDetails);
 router.get('/stats', authenticate, vendorOrAdmin, getVendorStats);
 
 router.get('/all', authenticate, adminOnly, getAllVendors);
+router.get('/:vendorId', authenticate, adminOnly, getVendorById);
 router.put('/:vendorId/status', authenticate, adminOnly, updateVendorStatus);
 
 router.get('/public/:vendorId', getPublicVendorProfile);
