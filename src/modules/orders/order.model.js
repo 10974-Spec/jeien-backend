@@ -204,19 +204,47 @@ const OrderSchema = new mongoose.Schema({
       default: 0
     },
     discountCode: String
+  },
+  // Commission tracking for vendor payouts
+  commissionDetails: {
+    rate: {
+      type: Number,
+      default: 10, // 10% commission rate
+      min: [0, 'Commission rate cannot be negative'],
+      max: [100, 'Commission rate cannot exceed 100%']
+    },
+    adminAmount: {
+      type: Number,
+      default: 0, // 10% of total goes to admin
+      min: [0, 'Admin commission cannot be negative']
+    },
+    vendorAmount: {
+      type: Number,
+      default: 0, // 90% of total goes to vendor
+      min: [0, 'Vendor amount cannot be negative']
+    },
+    processed: {
+      type: Boolean,
+      default: false
+    },
+    processedAt: {
+      type: Date
+    },
+    payoutTransactionId: String, // M-Pesa transaction ID for vendor payout
+    adminTransactionId: String // M-Pesa transaction ID for admin commission
   }
 }, {
   timestamps: true,
   toJSON: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.__v;
       return ret;
     }
   },
   toObject: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.__v;
       return ret;
     }
@@ -230,38 +258,38 @@ OrderSchema.virtual('buyerInfo', {
   justOne: true
 });
 
-OrderSchema.pre('save', function(next) {
+OrderSchema.pre('save', function (next) {
   if (this.isNew && !this.orderId) {
     const crypto = require('crypto');
     this.orderId = `ORD-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
   }
-  
+
   if (!this.estimatedDelivery) {
     this.estimatedDelivery = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   }
-  
+
   // Set free shipping if subtotal is above certain threshold (e.g., 5000)
   if (this.subtotal >= 5000 && !this.flags.freeShipping) {
     this.flags.freeShipping = true;
     this.shippingFee = 0;
   }
-  
+
   next();
 });
 
-OrderSchema.pre('validate', function(next) {
+OrderSchema.pre('validate', function (next) {
   // Remove the strict total amount validation that was causing issues
   // Instead, we'll calculate the total if it's not set
   if (!this.totalAmount && this.subtotal !== undefined) {
     this.totalAmount = this.subtotal + (this.tax || 0) + (this.shippingFee || 0);
   }
-  
+
   // Apply discount if any
   if (this.flags.discountAmount > 0) {
     this.totalAmount = this.totalAmount - this.flags.discountAmount;
     if (this.totalAmount < 0) this.totalAmount = 0;
   }
-  
+
   // Round to 2 decimal places to avoid floating point precision issues
   if (this.totalAmount) {
     this.totalAmount = parseFloat(this.totalAmount.toFixed(2));
@@ -275,7 +303,7 @@ OrderSchema.pre('validate', function(next) {
   if (this.shippingFee) {
     this.shippingFee = parseFloat(this.shippingFee.toFixed(2));
   }
-  
+
   next();
 });
 

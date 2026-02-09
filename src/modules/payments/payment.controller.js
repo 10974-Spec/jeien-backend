@@ -373,28 +373,102 @@ const processCardPayment = async (req, res) => {
 
 const simulateVendorPayout = async (order) => {
   try {
-    console.log(`[SIMULATED] Processing vendor payout for order ${order.orderId}`);
+    console.log(`Processing vendor payout for order ${order.orderId}`);
 
-    // Simulate vendor payout for development
-    const payoutData = {
-      orderId: order.orderId,
-      amount: order.totalAmount,
-      timestamp: new Date().toISOString(),
-      status: 'SIMULATED',
-      transactionId: `SIM-PAYOUT-${Date.now()}`,
-      note: 'Vendor payout simulated for development'
+    // Calculate commission (10% admin, 90% vendor)
+    const commissionRate = parseFloat(process.env.DEFAULT_COMMISSION_RATE || 10);
+    const adminCommission = parseFloat((order.totalAmount * (commissionRate / 100)).toFixed(2));
+    const vendorPayout = parseFloat((order.totalAmount - adminCommission).toFixed(2));
+
+    console.log('Commission breakdown:', {
+      totalAmount: order.totalAmount,
+      commissionRate: `${commissionRate}%`,
+      adminCommission,
+      vendorPayout
+    });
+
+    // Update order with commission details
+    order.commissionDetails = {
+      rate: commissionRate,
+      adminAmount: adminCommission,
+      vendorAmount: vendorPayout,
+      processed: false,
+      processedAt: null
+    };
+    await order.save();
+
+    // Get vendor details to find payout phone number
+    const Vendor = require('../vendors/vendor.model');
+    const vendors = await Vendor.find({ _id: { $in: order.vendorIds } });
+
+    if (vendors.length === 0) {
+      console.log('No vendor found for payout');
+      return { success: false, error: 'No vendor found' };
+    }
+
+    // For now, we'll use the first vendor's phone number
+    const vendor = vendors[0];
+    const vendorPhone = vendor.bankDetails?.phoneNumber;
+    const adminShortcode = process.env.MPESA_SHORTCODE;
+
+    if (!vendorPhone) {
+      console.log('Vendor phone number not configured');
+      return { success: false, error: 'Vendor phone number not configured' };
+    }
+
+    console.log(`Initiating payouts:
+      - Vendor (${vendorPhone}): KES ${vendorPayout} (90%)
+      - Admin (${adminShortcode}): KES ${adminCommission} (10%)`);
+
+    // Process vendor payout (90%)
+    const vendorPayoutResult = await processMpesaPayout(
+      vendorPhone,
+      vendorPayout,
+      `Vendor-${order.orderId}`
+    );
+
+    // Process admin commission (10%)
+    const adminPayoutResult = await processMpesaPayout(
+      adminShortcode,
+      adminCommission,
+      `Admin-${order.orderId}`
+    );
+
+    // Update order with transaction IDs
+    order.commissionDetails.processed = true;
+    order.commissionDetails.processedAt = new Date();
+    order.commissionDetails.payoutTransactionId = vendorPayoutResult.data?.transactionId;
+    order.commissionDetails.adminTransactionId = adminPayoutResult.data?.transactionId;
+    await order.save();
+
+    console.log('Payouts completed successfully');
+
+    return {
+      success: true,
+      data: {
+        orderId: order.orderId,
+        totalAmount: order.totalAmount,
+        vendorPayout: {
+          amount: vendorPayout,
+          phone: vendorPhone,
+          transactionId: vendorPayoutResult.data?.transactionId
+        },
+        adminCommission: {
+          amount: adminCommission,
+          shortcode: adminShortcode,
+          transactionId: adminPayoutResult.data?.transactionId
+        },
+        timestamp: new Date().toISOString()
+      }
     };
 
-    console.log('Simulated vendor payout:', payoutData);
-
-    return { success: true, data: payoutData };
-
   } catch (error) {
-    console.error('Vendor payout simulation error:', error);
-    // Don't throw error for simulation
+    console.error('Vendor payout error:', error);
     return { success: false, error: error.message };
   }
 };
+
+
 
 const processMpesaPayout = async (phone, amount, reference) => {
   try {
