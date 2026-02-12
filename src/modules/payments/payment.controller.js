@@ -1114,6 +1114,96 @@ const testMpesaPayment = async (req, res) => {
 //   }
 // };
 
+// Manual payment completion for development (when M-Pesa can't reach localhost)
+const manualCompletePayment = async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order ID is required'
+      });
+    }
+
+    // Find the order
+    const order = await Order.findOne({
+      $or: [{ _id: orderId }, { orderId: orderId }]
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Check authorization (buyer, vendor, or admin)
+    const isAuthorized = userRole === 'ADMIN' ||
+      order.buyer.toString() === userId ||
+      (order.vendorIds && order.vendorIds.some(vendorId => vendorId.toString() === userId));
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to complete this payment'
+      });
+    }
+
+    // Check if payment is already completed
+    if (order.paymentStatus === 'COMPLETED') {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment already completed',
+        order: {
+          orderId: order.orderId,
+          paymentStatus: order.paymentStatus,
+          status: order.status
+        }
+      });
+    }
+
+    // Complete the payment
+    order.paymentStatus = 'COMPLETED';
+    order.status = 'PROCESSING';
+    order.paymentDetails = order.paymentDetails || {};
+    order.paymentDetails.paidAt = new Date();
+    order.paymentDetails.notes = 'Payment manually completed (development mode)';
+    order.paymentDetails.mpesaReceiptNumber = order.paymentDetails.mpesaReceiptNumber || `MANUAL-${Date.now()}`;
+    order.paymentDetails.amountPaid = order.totalAmount;
+
+    await order.save();
+
+    console.log(`✅ Payment manually completed for order ${order.orderId}`);
+
+    // Simulate vendor payout
+    await simulateVendorPayout(order);
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment completed successfully',
+      order: {
+        id: order._id,
+        orderId: order.orderId,
+        paymentStatus: order.paymentStatus,
+        status: order.status,
+        amount: order.totalAmount,
+        paidAt: order.paymentDetails.paidAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Manual payment completion error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to complete payment',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   processMpesaPayment,
   processPayPalPayment,
@@ -1121,5 +1211,6 @@ module.exports = {
   handlePaymentWebhook,
   getPaymentMethods,
   getPaymentStatus,
-  testMpesaPayment
+  testMpesaPayment,
+  manualCompletePayment
 };
