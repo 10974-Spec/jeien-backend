@@ -1,6 +1,7 @@
 const Order = require('../orders/order.model');
 const Vendor = require('../vendors/vendor.model');
 const mpesaService = require('../../utils/mpesa.service');
+const smsService = require('../../utils/sms.service');
 
 const processMpesaPayment = async (req, res) => {
   try {
@@ -611,6 +612,22 @@ const handleMpesaWebhook = async (data) => {
 
         console.log(`Order ${order.orderId} marked as COMPLETED via simulated webhook`);
 
+        // Populate buyer for SMS
+        await order.populate('buyer', 'name email phone');
+
+        // Send SMS notification to customer
+        try {
+          const smsResult = await smsService.sendPaymentConfirmationSMS(order, order.buyer);
+          if (smsResult.success) {
+            console.log(`SMS sent to customer for order ${order.orderId}`);
+          } else {
+            console.warn(`Failed to send SMS for order ${order.orderId}:`, smsResult.error);
+          }
+        } catch (smsError) {
+          console.error('SMS sending error:', smsError);
+          // Don't fail the webhook if SMS fails
+        }
+
         // Simulate vendor payout
         await simulateVendorPayout(order);
       }
@@ -685,6 +702,22 @@ const handleMpesaWebhook = async (data) => {
     order.paymentDetails.notes = `M-Pesa payment completed successfully`;
 
     await order.save();
+
+    // Populate buyer for SMS
+    await order.populate('buyer', 'name email phone');
+
+    // Send SMS notification to customer
+    try {
+      const smsResult = await smsService.sendPaymentConfirmationSMS(order, order.buyer);
+      if (smsResult.success) {
+        console.log(`SMS sent to customer for order ${order.orderId}`);
+      } else {
+        console.warn(`Failed to send SMS for order ${order.orderId}:`, smsResult.error);
+      }
+    } catch (smsError) {
+      console.error('SMS sending error:', smsError);
+      // Don't fail the webhook if SMS fails
+    }
 
     await simulateVendorPayout(order);
 
@@ -1039,6 +1072,30 @@ const testMpesaPayment = async (req, res) => {
         await order.save();
 
         console.log(`Test order ${order.orderId} marked as COMPLETED immediately`);
+
+        // Populate buyer for SMS
+        await order.populate('buyer', 'name email phone');
+
+        // Send SMS notification to customer (same as webhook)
+        try {
+          const smsResult = await smsService.sendPaymentConfirmationSMS(order, order.buyer);
+          if (smsResult.success) {
+            console.log(`SMS sent to customer for test order ${order.orderId}`);
+          } else {
+            console.warn(`Failed to send SMS for test order ${order.orderId}:`, smsResult.error);
+          }
+        } catch (smsError) {
+          console.error('SMS sending error in test payment:', smsError);
+          // Don't fail the test payment if SMS fails
+        }
+
+        // Simulate vendor payout (same as webhook)
+        try {
+          await simulateVendorPayout(order);
+        } catch (payoutError) {
+          console.error('Vendor payout error in test payment:', payoutError);
+          // Don't fail the test payment if payout fails
+        }
       }
     } catch (orderError) {
       console.error('Could not update order for test payment:', orderError);

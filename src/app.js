@@ -20,6 +20,7 @@ const messageRoutes = require('./modules/messages/message.routes');
 const adminRoutes = require('./modules/admin/admin.routes');
 const notificationRoutes = require('./modules/notifications/notification.routes');
 const analyticsRoutes = require('./modules/analytics/analytics.routes');
+const invoiceRoutes = require('./modules/invoices/invoice.routes');
 const errorMiddleware = require('./middlewares/error.middleware');
 
 const app = express();
@@ -151,6 +152,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/invoices', invoiceRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
