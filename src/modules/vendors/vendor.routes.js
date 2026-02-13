@@ -13,7 +13,8 @@ const {
   getAllVendors,
   getVendorById,
   updateVendorStatus,
-  getPublicVendorProfile
+  getPublicVendorProfile,
+  deleteVendor
 } = require('./vendor.controller');
 
 router.post('/register', authenticate, registerVendor);
@@ -30,6 +31,7 @@ router.get('/stats', authenticate, vendorOrAdmin, getVendorStats);
 router.get('/all', authenticate, adminOnly, getAllVendors);
 router.get('/:vendorId', authenticate, adminOnly, getVendorById);
 router.put('/:vendorId/status', authenticate, adminOnly, updateVendorStatus);
+router.delete('/:vendorId', authenticate, adminOnly, deleteVendor);
 
 router.get('/public/:vendorId', getPublicVendorProfile);
 

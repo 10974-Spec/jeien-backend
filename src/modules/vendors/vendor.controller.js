@@ -3,6 +3,7 @@ const User = require('../users/user.model');
 const Product = require('../products/product.model');
 const Order = require('../orders/order.model');
 const { uploadSingleImage } = require('../../utils/upload.util');
+const { notifyVendorRegistered } = require('../../utils/notification.service');
 
 const registerVendor = async (req, res) => {
   try {
@@ -41,6 +42,11 @@ const registerVendor = async (req, res) => {
 
     user.role = 'VENDOR';
     await user.save();
+
+    // Create notification for admin (non-blocking)
+    notifyVendorRegistered(vendor, user).catch(err =>
+      console.error('Failed to create vendor registration notification:', err)
+    );
 
     res.status(201).json({
       message: 'Vendor registration successful. Waiting for admin approval.',
@@ -464,6 +470,40 @@ const getPublicVendorProfile = async (req, res) => {
   }
 };
 
+const deleteVendor = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    const vendor = await Vendor.findById(vendorId).populate('user');
+    if (!vendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    // Delete all products associated with this vendor
+    await Product.deleteMany({ vendor: vendorId });
+
+    // Update user role back to BUYER if user exists
+    if (vendor.user) {
+      const user = await User.findById(vendor.user._id);
+      if (user && user.role === 'VENDOR') {
+        user.role = 'BUYER';
+        await user.save();
+      }
+    }
+
+    // Delete the vendor
+    await Vendor.findByIdAndDelete(vendorId);
+
+    res.json({
+      success: true,
+      message: 'Vendor and associated products deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete vendor error:', error);
+    res.status(500).json({ message: 'Failed to delete vendor', error: error.message });
+  }
+};
+
 module.exports = {
   registerVendor,
   getVendorStore,
@@ -474,5 +514,6 @@ module.exports = {
   getAllVendors,
   getVendorById,
   updateVendorStatus,
-  getPublicVendorProfile
+  getPublicVendorProfile,
+  deleteVendor
 };
