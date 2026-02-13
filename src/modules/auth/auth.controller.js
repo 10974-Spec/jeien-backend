@@ -18,8 +18,10 @@ const register = async (req, res) => {
       });
     }
 
+    const normalizedEmail = email.toLowerCase();
+
     // Check if user exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({
         success: false,
@@ -29,8 +31,8 @@ const register = async (req, res) => {
 
     // Create user - password is now optional
     const userData = {
-      name: name || email.split('@')[0],
-      email,
+      name: name || normalizedEmail.split('@')[0],
+      email: normalizedEmail,
       role,
       authProvider: password ? 'local' : 'email'
     };
@@ -87,8 +89,10 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    const normalizedEmail = email.toLowerCase();
+
     // Find user
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -96,11 +100,11 @@ const login = async (req, res) => {
       });
     }
 
-    // Check if user has password (OAuth users might not)
+    // Check if user has password (OAuth users might not, or buyers who registered without one)
     if (!user.password) {
       return res.status(401).json({
         success: false,
-        message: 'Please login using your social account'
+        message: 'This account was created without a password. Please reset your password to login.'
       });
     }
 
@@ -157,8 +161,10 @@ const requestPasswordReset = async (req, res) => {
       });
     }
 
+    const normalizedEmail = email.toLowerCase();
+
     // Find user
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       // Don't reveal if user exists or not
       return res.json({
