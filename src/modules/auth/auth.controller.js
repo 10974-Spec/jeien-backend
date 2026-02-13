@@ -1,11 +1,22 @@
 const User = require('../users/user.model');
+const PasswordReset = require('./passwordReset.model');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const config = require('../../config/env');
+const { sendPasswordResetEmail, sendWelcomeEmail } = require('../../utils/email.service');
+const { notifyUserRegistered } = require('../../utils/notification.service');
 
 const register = async (req, res) => {
   try {
     const { name, email, password, role = 'BUYER' } = req.body;
+
+    // Validate email
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -16,16 +27,33 @@ const register = async (req, res) => {
       });
     }
 
-    // Create user
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({
-      name,
+    // Create user - password is now optional
+    const userData = {
+      name: name || email.split('@')[0],
       email,
-      password: hashedPassword,
-      role
-    });
+      role,
+      authProvider: password ? 'local' : 'email'
+    };
 
+    if (password) {
+      userData.password = await bcrypt.hash(password, 10);
+    }
+
+    const user = new User(userData);
     await user.save();
+
+    // Create notification for admin (non-blocking)
+    notifyUserRegistered(user).catch(err =>
+      console.error('Failed to create user registration notification:', err)
+    );
+
+    // Send welcome email
+    try {
+      await sendWelcomeEmail(email, user.name);
+    } catch (emailError) {
+      console.error('Welcome email error:', emailError);
+      // Don't fail registration if email fails
+    }
 
     // Generate token
     const token = jwt.sign(
@@ -68,6 +96,14 @@ const login = async (req, res) => {
       });
     }
 
+    // Check if user has password (OAuth users might not)
+    if (!user.password) {
+      return res.status(401).json({
+        success: false,
+        message: 'Please login using your social account'
+      });
+    }
+
     // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
@@ -104,6 +140,134 @@ const login = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Login failed',
+      error: error.message
+    });
+  }
+};
+
+// Request password reset
+const requestPasswordReset = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      // Don't reveal if user exists or not
+      return res.json({
+        success: true,
+        message: 'If an account exists with this email, a password reset link has been sent'
+      });
+    }
+
+    // Generate reset token
+    const resetToken = await PasswordReset.createResetToken(user._id);
+
+    // Send reset email
+    try {
+      await sendPasswordResetEmail(email, resetToken, user.name);
+    } catch (emailError) {
+      console.error('Password reset email error:', emailError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send password reset email'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'If an account exists with this email, a password reset link has been sent'
+    });
+
+  } catch (error) {
+    console.error('Request password reset error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process password reset request',
+      error: error.message
+    });
+  }
+};
+
+// Verify reset token
+const verifyResetToken = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const resetToken = await PasswordReset.verifyToken(token);
+
+    if (!resetToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired reset token'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Token is valid',
+      email: resetToken.user.email
+    });
+
+  } catch (error) {
+    console.error('Verify reset token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify reset token',
+      error: error.message
+    });
+  }
+};
+
+// Reset password
+const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token and new password are required'
+      });
+    }
+
+    // Verify token
+    const resetToken = await PasswordReset.verifyToken(token);
+
+    if (!resetToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired reset token'
+      });
+    }
+
+    // Update user password
+    const user = resetToken.user;
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.authProvider = 'local'; // Update auth provider
+    await user.save();
+
+    // Mark token as used
+    resetToken.used = true;
+    await resetToken.save();
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully'
+    });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reset password',
       error: error.message
     });
   }
@@ -249,6 +413,9 @@ const updateProfileImage = async (req, res) => {
 module.exports = {
   register,
   login,
+  requestPasswordReset,
+  verifyResetToken,
+  resetPassword,
   googleAuth,
   facebookAuth,
   me,

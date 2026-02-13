@@ -4,6 +4,7 @@ const Category = require('../categories/category.model');
 const mongoose = require('mongoose');
 const { uploadMultipleImages, deleteMultipleImages } = require('../../utils/upload.util');
 const { validatePrice } = require('../../utils/price.util');
+const { notifyProductPublished, notifyProductDeleted } = require('../../utils/notification.service');
 
 // =============== DEBUG HELPER ===============
 const debugLog = (message, data = null) => {
@@ -239,6 +240,13 @@ const createProduct = async (req, res) => {
       $inc: { 'stats.totalProducts': 1 }
     });
     debugLog('Vendor stats updated');
+
+    // Create notification for admin (non-blocking)
+    if (product.approved) {
+      notifyProductPublished(product).catch(err =>
+        console.error('Failed to create product notification:', err)
+      );
+    }
 
     // Send response
     const responseMessage = req.user.role === 'ADMIN' ?
@@ -829,6 +837,11 @@ const deleteProduct = async (req, res) => {
     await Vendor.findByIdAndUpdate(product.vendor._id, {
       $inc: { 'stats.totalProducts': -1 }
     });
+
+    // Create notification for admin (non-blocking)
+    notifyProductDeleted(product).catch(err =>
+      console.error('Failed to create product deletion notification:', err)
+    );
 
     debugLog('Product deleted successfully');
     res.json({

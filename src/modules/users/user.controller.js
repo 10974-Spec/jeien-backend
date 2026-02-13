@@ -65,7 +65,7 @@ const updateUserProfile = async (req, res) => {
 
     if (name) user.name = name;
     if (phone) user.phone = phone;
-    
+
     if (preferences) {
       user.preferences = {
         ...user.preferences,
@@ -96,13 +96,13 @@ const updateProfileImage = async (req, res) => {
 
     const userId = req.user.id;
     const user = await User.findById(userId);
-    
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     const newImageUrl = await uploadSingleImage(req.file, 'profiles');
-    
+
     user.profileImage = newImageUrl;
     await user.save();
 
@@ -319,6 +319,143 @@ const updateUserRole = async (req, res) => {
   }
 };
 
+// Get detailed user information for admin modal
+const getUserDetails = async (req, res) => {
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required'
+      });
+    }
+
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).select('-password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Get vendor profile if user is a vendor
+    let vendorProfile = null;
+    if (user.role === 'VENDOR') {
+      vendorProfile = await Vendor.findOne({ user: userId });
+    }
+
+    // Get user's orders
+    const orders = await Order.find({ buyer: userId })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('orderId totalAmount status paymentStatus createdAt');
+
+    // Get order statistics
+    const orderStats = await Order.aggregate([
+      { $match: { buyer: user._id } },
+      {
+        $group: {
+          _id: null,
+          totalOrders: { $sum: 1 },
+          totalSpent: { $sum: '$totalAmount' },
+          completedOrders: {
+            $sum: { $cond: [{ $eq: ['$status', 'DELIVERED'] }, 1, 0] }
+          },
+          cancelledOrders: {
+            $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] }
+          }
+        }
+      }
+    ]);
+
+    const stats = orderStats[0] || {
+      totalOrders: 0,
+      totalSpent: 0,
+      completedOrders: 0,
+      cancelledOrders: 0
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user,
+        vendorProfile,
+        orders,
+        stats
+      }
+    });
+  } catch (error) {
+    console.error('Get user details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get user details',
+      error: error.message
+    });
+  }
+};
+
+// Delete user (admin only)
+const deleteUser = async (req, res) => {
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required'
+      });
+    }
+
+    const { userId } = req.params;
+
+    // Prevent admin from deleting themselves
+    if (userId === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot delete your own account'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Delete associated vendor profile if exists
+    if (user.role === 'VENDOR') {
+      const vendor = await Vendor.findOne({ user: userId });
+      if (vendor) {
+        // Note: Products and orders will remain but vendor reference will be null
+        await Vendor.deleteOne({ _id: vendor._id });
+        console.log(`Deleted vendor profile for user ${userId}`);
+      }
+    }
+
+    // Delete the user
+    await User.deleteOne({ _id: userId });
+
+    console.log(`User ${userId} deleted by admin ${req.user.id}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'User deleted successfully',
+      data: {
+        deletedUserId: userId,
+        deletedUserEmail: user.email
+      }
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete user',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getUserProfile,
   updateUserProfile,
@@ -326,5 +463,7 @@ module.exports = {
   updatePassword,
   manageAddresses,
   getAllUsers,
-  updateUserRole
+  updateUserRole,
+  getUserDetails,
+  deleteUser
 };

@@ -3,6 +3,7 @@ const Product = require('../products/product.model');
 const User = require('../users/user.model');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const { notifyOrderCreated } = require('../../utils/notification.service');
 
 // =============== DEBUG HELPER ===============
 const debugLog = (message, data = null) => {
@@ -308,6 +309,12 @@ const createOrder = async (req, res) => {
     session.endSession();
 
     debugLog('=== CREATE ORDER COMPLETED SUCCESSFULLY ===');
+
+    // Create notification for admin (non-blocking)
+    notifyOrderCreated(order).catch(err =>
+      console.error('Failed to create order notification:', err)
+    );
+
 
     // Trigger M-Pesa STK Push if payment method is MPESA
     let mpesaResponse = null;
@@ -1402,6 +1409,153 @@ const searchOrders = async (req, res) => {
   }
 };
 
+// Delete a single order (admin only)
+const deleteOrder = async (req, res) => {
+  debugLog('=== DELETE ORDER ===');
+  debugLog('Order ID:', req.params.id);
+  debugLog('Request user:', req.user);
+
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required'
+      });
+    }
+
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid order ID format'
+      });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Restore product stock if order was not cancelled
+    if (order.status !== 'CANCELLED') {
+      debugLog('Restoring product stock before deletion...');
+      for (const item of order.items) {
+        await Product.findByIdAndUpdate(
+          item.productId,
+          { $inc: { stock: item.quantity } },
+          { new: true }
+        );
+        debugLog(`Restored ${item.quantity} units to product ${item.productId}`);
+      }
+    }
+
+    await Order.deleteOne({ _id: id });
+
+    debugLog(`Order ${order.orderId} deleted by admin ${req.user.id}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Order deleted successfully',
+      data: {
+        deletedOrderId: order.orderId
+      }
+    });
+  } catch (error) {
+    debugLog('Delete order error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete order',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+    });
+  }
+};
+
+// Bulk delete/clear orders (admin only)
+const clearOrders = async (req, res) => {
+  debugLog('=== CLEAR ORDERS ===');
+  debugLog('Request user:', req.user);
+  debugLog('Request body:', req.body);
+
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required'
+      });
+    }
+
+    const { status, paymentStatus, olderThan } = req.body;
+
+    const filter = {};
+
+    // Build filter based on provided criteria
+    if (status) {
+      filter.status = status;
+    }
+
+    if (paymentStatus) {
+      filter.paymentStatus = paymentStatus;
+    }
+
+    if (olderThan) {
+      const date = new Date(olderThan);
+      if (!isNaN(date.getTime())) {
+        filter.createdAt = { $lt: date };
+      }
+    }
+
+    debugLog('Delete filter:', filter);
+
+    // Find orders to delete
+    const ordersToDelete = await Order.find(filter);
+    debugLog(`Found ${ordersToDelete.length} orders to delete`);
+
+    if (ordersToDelete.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No orders found matching criteria',
+        deletedCount: 0
+      });
+    }
+
+    // Restore product stock for non-cancelled orders
+    for (const order of ordersToDelete) {
+      if (order.status !== 'CANCELLED') {
+        for (const item of order.items) {
+          await Product.findByIdAndUpdate(
+            item.productId,
+            { $inc: { stock: item.quantity } },
+            { new: true }
+          );
+        }
+      }
+    }
+
+    // Delete orders
+    const result = await Order.deleteMany(filter);
+
+    debugLog(`Deleted ${result.deletedCount} orders`);
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} orders`,
+      deletedCount: result.deletedCount,
+      filter
+    });
+  } catch (error) {
+    debugLog('Clear orders error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to clear orders',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+    });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrderById,
@@ -1412,5 +1566,7 @@ module.exports = {
   getVendorOrders,
   getAdminOrders,
   searchOrders,
-  trackOrder
+  trackOrder,
+  deleteOrder,
+  clearOrders
 };

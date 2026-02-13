@@ -15,6 +15,11 @@ const orderRoutes = require('./modules/orders/order.routes');
 const paymentRoutes = require('./modules/payments/payment.routes');
 const adRoutes = require('./modules/ads/ad.routes');
 const reviewRoutes = require('./modules/reviews/review.routes');
+const settingsRoutes = require('./modules/settings/settings.routes');
+const messageRoutes = require('./modules/messages/message.routes');
+const adminRoutes = require('./modules/admin/admin.routes');
+const notificationRoutes = require('./modules/notifications/notification.routes');
+const analyticsRoutes = require('./modules/analytics/analytics.routes');
 const errorMiddleware = require('./middlewares/error.middleware');
 
 const app = express();
@@ -38,19 +43,19 @@ const allowedOrigins = [
 // IMPORTANT: Create a custom CORS middleware to handle preflight properly
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  
+
   // Check if origin is allowed
   if (!origin || allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
     res.header('Access-Control-Allow-Origin', origin || '*');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Expose-Headers', [
-      'X-RateLimit-Limit', 
-      'X-RateLimit-Remaining', 
+      'X-RateLimit-Limit',
+      'X-RateLimit-Remaining',
       'X-RateLimit-Reset',
       'X-Request-ID',
       'X-Request-Id'  // Add lowercase version too
     ].join(', '));
-    
+
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
@@ -79,7 +84,7 @@ app.use((req, res, next) => {
       message: 'Not allowed by CORS'
     });
   }
-  
+
   next();
 });
 
@@ -108,26 +113,26 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Request logging middleware
 app.use((req, res, next) => {
   // Generate request ID if not present
-  const requestId = req.headers['x-request-id'] || 
-                   req.headers['X-Request-ID'] || 
-                   req.headers['X-Request-Id'] ||
-                   Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-  
+  const requestId = req.headers['x-request-id'] ||
+    req.headers['X-Request-ID'] ||
+    req.headers['X-Request-Id'] ||
+    Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
   req.requestId = requestId;
-  
+
   // Add request ID to response headers (both cases for compatibility)
   res.header('X-Request-ID', requestId);
   res.header('X-Request-Id', requestId);
   res.header('x-request-id', requestId);
-  
+
   console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl} [${requestId}]`);
   console.log(`  Origin: ${req.headers.origin || 'none'}`);
   console.log(`  User-Agent: ${req.headers['user-agent']?.substring(0, 50)}...`);
-  
+
   if (req.method === 'POST' || req.method === 'PUT') {
     console.log('  Body:', JSON.stringify(req.body).substring(0, 200));
   }
-  
+
   next();
 });
 
@@ -141,6 +146,11 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/ads', adRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -218,11 +228,11 @@ app.get('/api', (req, res) => {
 if (config.NODE_ENV === 'production') {
   const clientBuildPath = path.join(__dirname, '../client/build');
   const fs = require('fs');
-  
+
   if (fs.existsSync(clientBuildPath)) {
     console.log('✅ Serving React app from:', clientBuildPath);
     app.use(express.static(clientBuildPath));
-    
+
     app.get('*', (req, res) => {
       if (!req.path.startsWith('/api')) {
         res.sendFile(path.join(clientBuildPath, 'index.html'));
@@ -249,7 +259,7 @@ if (config.NODE_ENV === 'production') {
       requestId: req.requestId,
     });
   });
-  
+
   // Test login endpoint (for debugging)
   app.post('/api/auth/test-login', (req, res) => {
     console.log('Test login attempt:', req.body);

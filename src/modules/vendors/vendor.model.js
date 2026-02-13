@@ -14,7 +14,25 @@ const VendorSchema = new mongoose.Schema({
     minlength: [3, 'Store name must be at least 3 characters'],
     maxlength: [100, 'Store name cannot exceed 100 characters']
   },
+  username: {
+    type: String,
+    unique: true,
+    sparse: true,
+    trim: true,
+    lowercase: true,
+    minlength: [3, 'Username must be at least 3 characters'],
+    maxlength: [30, 'Username cannot exceed 30 characters']
+  },
+  ownerName: {
+    type: String,
+    trim: true,
+    maxlength: [100, 'Owner name cannot exceed 100 characters']
+  },
   storeLogo: {
+    type: String,
+    default: null
+  },
+  storeImage: {
     type: String,
     default: null
   },
@@ -57,15 +75,18 @@ const VendorSchema = new mongoose.Schema({
   contactInfo: {
     email: {
       type: String,
+      required: [true, 'Contact email is required'],
       lowercase: true,
       trim: true
     },
     phone: {
       type: String,
+      required: [true, 'Contact phone is required'],
       trim: true
     },
     address: {
       type: String,
+      required: [true, 'Contact address is required'],
       trim: true
     }
   },
@@ -76,6 +97,11 @@ const VendorSchema = new mongoose.Schema({
   verified: {
     type: Boolean,
     default: false
+  },
+  status: {
+    type: String,
+    enum: ['PENDING', 'ACTIVE', 'SUSPENDED', 'INACTIVE'],
+    default: 'PENDING'
   },
   commissionRate: {
     type: Number,
@@ -162,14 +188,14 @@ const VendorSchema = new mongoose.Schema({
   timestamps: true,
   toJSON: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.__v;
       return ret;
     }
   },
   toObject: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.__v;
       return ret;
     }
@@ -199,15 +225,20 @@ VendorSchema.virtual('reviews', {
 
 VendorSchema.index({ user: 1 }, { unique: true });
 VendorSchema.index({ storeName: 1 });
+VendorSchema.index({ username: 1 }, { unique: true, sparse: true });
 VendorSchema.index({ active: 1 });
 VendorSchema.index({ verified: 1 });
+VendorSchema.index({ status: 1 });
 VendorSchema.index({ 'stats.totalSales': -1 });
 VendorSchema.index({ 'stats.averageRating': -1 });
 VendorSchema.index({ createdAt: -1 });
 
-VendorSchema.pre('save', function(next) {
+VendorSchema.pre('save', function (next) {
   if (this.isModified('storeName')) {
     this.storeName = this.storeName.trim();
+  }
+  if (this.isModified('username') && this.username) {
+    this.username = this.username.toLowerCase().trim();
   }
   next();
 });

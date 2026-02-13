@@ -375,8 +375,8 @@ const simulateVendorPayout = async (order) => {
   try {
     console.log(`Processing vendor payout for order ${order.orderId}`);
 
-    // Calculate commission (10% admin, 90% vendor)
-    const commissionRate = parseFloat(process.env.DEFAULT_COMMISSION_RATE || 10);
+    // Calculate commission (7% admin, 93% vendor)
+    const commissionRate = parseFloat(process.env.DEFAULT_COMMISSION_RATE || 7);
     const adminCommission = parseFloat((order.totalAmount * (commissionRate / 100)).toFixed(2));
     const vendorPayout = parseFloat((order.totalAmount - adminCommission).toFixed(2));
 
@@ -417,8 +417,8 @@ const simulateVendorPayout = async (order) => {
     }
 
     console.log(`Initiating payouts:
-      - Vendor (${vendorPhone}): KES ${vendorPayout} (90%)
-      - Admin (${adminShortcode}): KES ${adminCommission} (10%)`);
+      - Vendor (${vendorPhone}): KES ${vendorPayout} (93%)
+      - Admin (${adminShortcode}): KES ${adminCommission} (7%)`);
 
     // Process vendor payout (90%)
     const vendorPayoutResult = await processMpesaPayout(

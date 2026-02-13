@@ -209,18 +209,18 @@ const OrderSchema = new mongoose.Schema({
   commissionDetails: {
     rate: {
       type: Number,
-      default: 10, // 10% commission rate
+      default: 7, // 7% commission rate
       min: [0, 'Commission rate cannot be negative'],
       max: [100, 'Commission rate cannot exceed 100%']
     },
     adminAmount: {
       type: Number,
-      default: 0, // 10% of total goes to admin
+      default: 0, // 7% of total goes to admin
       min: [0, 'Admin commission cannot be negative']
     },
     vendorAmount: {
       type: Number,
-      default: 0, // 90% of total goes to vendor
+      default: 0, // 93% of total goes to vendor
       min: [0, 'Vendor amount cannot be negative']
     },
     processed: {

@@ -18,8 +18,13 @@ const UserSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
+    required: false, // Made optional for OAuth users
     minlength: [6, 'Password must be at least 6 characters']
+  },
+  authProvider: {
+    type: String,
+    enum: ['local', 'google', 'facebook', 'email'],
+    default: 'local'
   },
   role: {
     type: String,
@@ -71,7 +76,7 @@ const UserSchema = new mongoose.Schema({
   timestamps: true,
   toJSON: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.password;
       delete ret.__v;
       return ret;
@@ -79,7 +84,7 @@ const UserSchema = new mongoose.Schema({
   },
   toObject: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function (doc, ret) {
       delete ret.password;
       delete ret.__v;
       return ret;
@@ -87,12 +92,11 @@ const UserSchema = new mongoose.Schema({
   }
 });
 
-UserSchema.virtual('defaultAddress').get(function() {
-  const addrs = this.addresses || []; // fallback to empty array
+UserSchema.virtual('defaultAddress').get(function () {
+  const addrs = this.addresses || [];
   const defaultAddr = addrs.find(addr => addr.isDefault);
   return defaultAddr || (addrs.length > 0 ? addrs[0] : null);
 });
-
 
 UserSchema.index({ email: 1 }, { unique: true });
 UserSchema.index({ role: 1 });

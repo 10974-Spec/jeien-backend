@@ -25,5 +25,7 @@ router.get('/vendor/orders', authenticate, adminOnly, orderController.getVendorO
 
 // Admin routes
 router.get('/admin/all', authenticate, adminOnly, orderController.getAdminOrders);
+router.delete('/:id', authenticate, adminOnly, orderController.deleteOrder);
+router.post('/admin/clear', authenticate, adminOnly, orderController.clearOrders);
 
 module.exports = router;
