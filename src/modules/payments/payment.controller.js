@@ -602,7 +602,7 @@ const handleMpesaWebhook = async (data) => {
 
       if (order) {
         order.paymentStatus = 'COMPLETED';
-        order.status = 'PROCESSING';
+        order.status = 'CONFIRMED';
         order.paymentDetails.paidAt = new Date();
         order.paymentDetails.notes = 'M-Pesa payment completed via webhook (simulated)';
         order.paymentDetails.mpesaReceiptNumber = `MPESA${Date.now()}`;
@@ -693,7 +693,7 @@ const handleMpesaWebhook = async (data) => {
     }
 
     order.paymentStatus = 'COMPLETED';
-    order.status = 'PROCESSING';
+    order.status = 'CONFIRMED';
     order.paymentDetails.paidAt = new Date();
     order.paymentDetails.receiptUrl = `https://api.safaricom.co.ke/mpesa/transaction/${CheckoutRequestID}/receipt`;
     order.paymentDetails.mpesaReceiptNumber = metadata.MpesaReceiptNumber;
