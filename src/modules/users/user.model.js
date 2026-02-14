@@ -10,20 +10,21 @@ const UserSchema = new mongoose.Schema({
   },
   email: {
     type: String,
-    required: [true, 'Email is required'],
+    required: false,
     unique: true,
+    sparse: true, // Allows multiple null values
     lowercase: true,
     trim: true,
     match: [/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
   },
   password: {
     type: String,
-    required: false, // Made optional for OAuth users
+    required: false, // Made optional for OAuth users & Phone-only users
     minlength: [6, 'Password must be at least 6 characters']
   },
   authProvider: {
     type: String,
-    enum: ['local', 'google', 'facebook', 'email'],
+    enum: ['local', 'google', 'facebook', 'email', 'phone'],
     default: 'local'
   },
   role: {
@@ -37,6 +38,8 @@ const UserSchema = new mongoose.Schema({
   },
   phone: {
     type: String,
+    required: [true, 'Phone number is required'],
+    unique: true,
     trim: true,
     match: [/^[0-9+\-\s()]+$/, 'Please enter a valid phone number']
   },
@@ -98,7 +101,8 @@ UserSchema.virtual('defaultAddress').get(function () {
   return defaultAddr || (addrs.length > 0 ? addrs[0] : null);
 });
 
-UserSchema.index({ email: 1 }, { unique: true });
+UserSchema.index({ email: 1 }, { unique: true, sparse: true });
+UserSchema.index({ phone: 1 }, { unique: true });
 UserSchema.index({ role: 1 });
 UserSchema.index({ createdAt: -1 });
 

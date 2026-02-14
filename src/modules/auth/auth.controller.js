@@ -8,37 +8,61 @@ const { notifyUserRegistered } = require('../../utils/notification.service');
 
 const register = async (req, res) => {
   try {
-    const { name, email, password, role = 'BUYER' } = req.body;
+    const { name, email, password, phone, role = 'BUYER' } = req.body;
 
-    // Validate email
-    if (!email) {
+    // Validate phone (required)
+    if (!phone) {
       return res.status(400).json({
         success: false,
-        message: 'Email is required'
+        message: 'Phone number is required'
       });
     }
 
-    const normalizedEmail = email.toLowerCase();
-
-    // Check if user exists
-    const existingUser = await User.findOne({ email: normalizedEmail });
-    if (existingUser) {
+    // Validate name (required)
+    if (!name) {
       return res.status(400).json({
         success: false,
-        message: 'User already exists'
+        message: 'Name is required'
       });
     }
 
-    // Create user - password is now optional
+    // Check if user exists by phone
+    const existingUserByPhone = await User.findOne({ phone });
+    if (existingUserByPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this phone number already exists'
+      });
+    }
+
+    // Check if user exists by email (if provided)
+    let normalizedEmail = null;
+    if (email) {
+      normalizedEmail = email.toLowerCase();
+      const existingUserByEmail = await User.findOne({ email: normalizedEmail });
+      if (existingUserByEmail) {
+        return res.status(400).json({
+          success: false,
+          message: 'User with this email already exists'
+        });
+      }
+    }
+
+    // Create user - password is optional
     const userData = {
-      name: name || normalizedEmail.split('@')[0],
-      email: normalizedEmail,
+      name,
+      phone,
       role,
-      authProvider: password ? 'local' : 'email'
+      authProvider: 'phone' // Default to phone/name auth
     };
+
+    if (normalizedEmail) {
+      userData.email = normalizedEmail;
+    }
 
     if (password) {
       userData.password = await bcrypt.hash(password, 10);
+      userData.authProvider = 'local'; // If password provided, use local strategy
     }
 
     const user = new User(userData);
@@ -49,12 +73,14 @@ const register = async (req, res) => {
       console.error('Failed to create user registration notification:', err)
     );
 
-    // Send welcome email
-    try {
-      await sendWelcomeEmail(email, user.name);
-    } catch (emailError) {
-      console.error('Welcome email error:', emailError);
-      // Don't fail registration if email fails
+    // Send welcome email (only if email is provided)
+    if (normalizedEmail) {
+      try {
+        await sendWelcomeEmail(normalizedEmail, user.name);
+      } catch (emailError) {
+        console.error('Welcome email error:', emailError);
+        // Don't fail registration if email fails
+      }
     }
 
     // Generate token
@@ -87,33 +113,87 @@ const register = async (req, res) => {
 
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, phone, password, name } = req.body;
 
-    const normalizedEmail = email.toLowerCase();
+    let user;
 
-    // Find user
-    const user = await User.findOne({ email: normalizedEmail });
-    if (!user) {
-      return res.status(401).json({
+    if (phone) {
+      // Phone based login
+      user = await User.findOne({ phone });
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not found with this phone number'
+        });
+      }
+
+      // 1. Password Check (if provided by user AND user has password set)
+      if (password && user.password) {
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid password'
+          });
+        }
+      }
+      // 2. Name Check (if password NOT provided OR user has NO password)
+      // This is the "Passwordless" flow requested: Phone + Name
+      else {
+        if (!name) {
+          return res.status(401).json({
+            success: false,
+            message: 'Name is required for login without password'
+          });
+        }
+
+        // Simple case-insensitive match
+        if (user.name.toLowerCase() !== name.toLowerCase()) {
+          return res.status(401).json({
+            success: false,
+            message: 'Name does not match our records'
+          });
+        }
+      }
+
+    } else if (email) {
+      // Email based login (Legacy/Standard)
+      const normalizedEmail = email.toLowerCase();
+      user = await User.findOne({ email: normalizedEmail });
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+
+      if (!password) {
+        return res.status(401).json({
+          success: false,
+          message: 'Password required for email login'
+        });
+      }
+
+      if (!user.password) {
+        return res.status(401).json({
+          success: false,
+          message: 'This account was created without a password. Please use Phone & Name to login.'
+        });
+      }
+
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+    } else {
+      return res.status(400).json({
         success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Check if user has password (OAuth users might not, or buyers who registered without one)
-    if (!user.password) {
-      return res.status(401).json({
-        success: false,
-        message: 'This account was created without a password. Please reset your password to login.'
-      });
-    }
-
-    // Check password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
+        message: 'Please provide Email or Phone number'
       });
     }
 
