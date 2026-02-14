@@ -548,7 +548,14 @@ const processPayPalPayout = async (paypalEmail, amount, reference) => {
 
 const handlePaymentWebhook = async (req, res) => {
   try {
-    const { provider, data } = req.body;
+    let { provider, data } = req.body;
+
+    // Auto-detect M-Pesa callback
+    if (!provider && req.body.Body && req.body.Body.stkCallback) {
+      console.log('✅ Auto-detected M-Pesa callback format');
+      provider = 'MPESA';
+      data = req.body;
+    }
 
     console.log(`Payment webhook received from ${provider}:`, JSON.stringify(data, null, 2));
 
@@ -564,19 +571,25 @@ const handlePaymentWebhook = async (req, res) => {
         break;
       default:
         console.warn(`Unknown payment provider webhook: ${provider}`);
+        console.warn('Request body:', JSON.stringify(req.body, null, 2));
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Webhook received successfully'
-    });
+    // Always return 200 to acknowledge receipt
+    if (!res.headersSent) {
+      res.status(200).json({
+        success: true,
+        message: 'Webhook received successfully'
+      });
+    }
   } catch (error) {
     console.error('Payment webhook processing error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Webhook processing failed',
-      details: error.message
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: 'Webhook processing failed',
+        details: error.message
+      });
+    }
   }
 };
 
