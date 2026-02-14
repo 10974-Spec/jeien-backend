@@ -12,6 +12,25 @@ const {
   manualCompletePayment
 } = require('./payment.controller');
 
+// Root endpoint for testing
+router.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Payment routes loaded successfully',
+    timestamp: new Date().toISOString(),
+    availableEndpoints: [
+      'POST /api/payments/mpesa',
+      'POST /api/payments/paypal',
+      'POST /api/payments/card',
+      'POST /api/payments/webhook',
+      'POST /api/payments/mpesa/callback',
+      'GET /api/payments/methods',
+      'GET /api/payments/status/:orderId'
+    ]
+  });
+});
+
+
 // Payment processing endpoints
 router.post('/mpesa', authenticate, processMpesaPayment);
 router.post('/paypal', authenticate, processPayPalPayment);
