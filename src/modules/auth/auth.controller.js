@@ -113,12 +113,18 @@ const register = async (req, res) => {
 
 const login = async (req, res) => {
   try {
-    const { email, phone, password, name } = req.body;
+    let { email, phone, password, name } = req.body;
+
+    // Auto-detect if "phone" field contains an email address
+    if (phone && phone.includes('@')) {
+      email = phone;
+      phone = null;
+    }
 
     let user;
 
     if (phone) {
-      // Phone based login
+      // Phone based login (BUYERS ONLY)
       user = await User.findOne({ phone });
 
       if (!user) {
@@ -128,37 +134,32 @@ const login = async (req, res) => {
         });
       }
 
-      // 1. Password Check (if provided by user AND user has password set)
-      if (password && user.password) {
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-        if (!isPasswordValid) {
-          return res.status(401).json({
-            success: false,
-            message: 'Invalid password'
-          });
-        }
+      // ROLE-BASED RESTRICTION: Only buyers can login with phone+name
+      if (user.role !== 'BUYER') {
+        return res.status(403).json({
+          success: false,
+          message: 'Vendors and Admins must use email and password to login'
+        });
       }
-      // 2. Name Check (if password NOT provided OR user has NO password)
-      // This is the "Passwordless" flow requested: Phone + Name
-      else {
-        if (!name) {
-          return res.status(401).json({
-            success: false,
-            message: 'Name is required for login without password'
-          });
-        }
 
-        // Simple case-insensitive match
-        if (user.name.toLowerCase() !== name.toLowerCase()) {
-          return res.status(401).json({
-            success: false,
-            message: 'Name does not match our records'
-          });
-        }
+      // Name Check for passwordless login
+      if (!name) {
+        return res.status(401).json({
+          success: false,
+          message: 'Name is required for buyer login'
+        });
+      }
+
+      // Simple case-insensitive match
+      if (user.name.toLowerCase() !== name.toLowerCase()) {
+        return res.status(401).json({
+          success: false,
+          message: 'Name does not match our records'
+        });
       }
 
     } else if (email) {
-      // Email based login (Legacy/Standard)
+      // Email based login (VENDORS & ADMINS)
       const normalizedEmail = email.toLowerCase();
       user = await User.findOne({ email: normalizedEmail });
 
@@ -166,6 +167,14 @@ const login = async (req, res) => {
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
+        });
+      }
+
+      // ROLE-BASED RESTRICTION: Only vendors and admins can login with email
+      if (user.role === 'BUYER') {
+        return res.status(403).json({
+          success: false,
+          message: 'Buyers must use phone number and name to login'
         });
       }
 
@@ -179,7 +188,7 @@ const login = async (req, res) => {
       if (!user.password) {
         return res.status(401).json({
           success: false,
-          message: 'This account was created without a password. Please use Phone & Name to login.'
+          message: 'This account was created without a password. Please contact support.'
         });
       }
 

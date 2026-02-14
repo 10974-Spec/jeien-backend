@@ -118,7 +118,19 @@ const sendPaymentConfirmationSMS = async (order, buyer) => {
             };
         }
 
-        const message = `JEIEN: Payment of KES ${order.totalAmount.toLocaleString()} for order #${order.orderId} received successfully. Your order is now being processed. Thank you!`;
+        // Create items summary (max 2 items to keep SMS short)
+        const itemsSummary = order.items
+            .slice(0, 2)
+            .map(item => item.product?.name || item.name || 'Product')
+            .join(', ');
+
+        const moreItems = order.items.length > 2 ? ` +${order.items.length - 2} more` : '';
+        const itemsText = itemsSummary ? ` for ${itemsSummary}${moreItems}` : '';
+
+        // Format date
+        const date = new Date().toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' });
+
+        const message = `JEIEN: Payment received! Order #${order.orderId}${itemsText} amounting to KES ${order.totalAmount.toLocaleString()} has been confirmed on ${date}. Thank you for shopping with us!`;
 
         return await sendSMS(phoneNumber, message);
 
