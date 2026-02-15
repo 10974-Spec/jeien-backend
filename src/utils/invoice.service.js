@@ -31,7 +31,7 @@ const generateInvoicePDF = async (orderId) => {
         .text('Premium Marketplace', 50, 75)
         .text('Nairobi, Kenya', 50, 88)
         .text('+254746917511', 50, 101)
-        .text('info@jeien.com', 50, 114);
+        .text('caprufru@gmail.com', 50, 114);
 
     // Invoice title and details
     doc

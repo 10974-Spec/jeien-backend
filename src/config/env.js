@@ -92,7 +92,7 @@ const config = {
   SMTP_PORT: parseInt(process.env.SMTP_PORT) || 587,
   SMTP_USER: process.env.SMTP_USER,
   SMTP_PASS: process.env.SMTP_PASS,
-  EMAIL_FROM: process.env.EMAIL_FROM || 'noreply@jeien.com',
+  EMAIL_FROM: process.env.EMAIL_FROM || 'caprufru@gmail.com',
 
   // Session
   SESSION_SECRET: process.env.SESSION_SECRET || process.env.JWT_SECRET,

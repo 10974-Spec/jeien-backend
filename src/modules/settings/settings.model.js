@@ -21,7 +21,7 @@ const SettingsSchema = new mongoose.Schema({
         },
         siteEmail: {
             type: String,
-            default: 'support@jeien.com'
+            default: 'caprufru@gmail.com'
         },
         sitePhone: {
             type: String,
