@@ -37,12 +37,12 @@ const generateInvoicePDF = async (orderId) => {
     doc
         .fontSize(18)
         .font('Helvetica-Bold')
-        .text('INVOICE', 400, 50, { align: 'right' })
+        .text('INVOICE', 300, 50, { align: 'right' })
         .fontSize(10)
         .font('Helvetica')
-        .text(`Invoice #: INV-${order.orderId}`, 400, 75, { align: 'right' })
-        .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-GB')}`, 400, 88, { align: 'right' })
-        .text(`Order: ${order.orderId}`, 400, 101, { align: 'right' });
+        .text(`Invoice #: INV-${order.orderId}`, 300, 75, { align: 'right' })
+        .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-GB')}`, 300, 88, { align: 'right' })
+        .text(`Order: ${order.orderId}`, 300, 101, { align: 'right' });
 
     // Horizontal line
     doc
@@ -57,9 +57,9 @@ const generateInvoicePDF = async (orderId) => {
         .text('Bill To:', 50, 160)
         .fontSize(10)
         .font('Helvetica')
-        .text(order.buyer?.name || 'N/A', 50, 178)
-        .text(order.buyer?.email || 'N/A', 50, 191)
-        .text(order.buyer?.phone || 'N/A', 50, 204);
+        .text(order.buyer?.name || 'N/A', 50, 178, { width: 230 })
+        .text(order.buyer?.email || 'N/A', 50, 191, { width: 230 })
+        .text(order.buyer?.phone || 'N/A', 50, 204, { width: 230 });
 
     // Shipping Address
     if (order.deliveryAddress) {
@@ -70,10 +70,10 @@ const generateInvoicePDF = async (orderId) => {
             .text('Ship To:', 300, 160)
             .fontSize(10)
             .font('Helvetica')
-            .text(address.fullName || order.buyer?.name || 'N/A', 300, 178)
-            .text(address.street || address.address || 'N/A', 300, 191)
-            .text(`${address.city || ''}, ${address.postalCode || ''}`, 300, 204)
-            .text(address.phone || '', 300, 217);
+            .text(address.fullName || order.buyer?.name || 'N/A', 300, 178, { width: 230 })
+            .text(address.street || address.address || 'N/A', 300, 191, { width: 230 })
+            .text(`${address.city || ''}, ${address.postalCode || ''}`, 300, 204, { width: 230 })
+            .text(address.phone || '', 300, 217, { width: 230 });
     }
 
     // Items table header
