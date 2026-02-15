@@ -73,14 +73,11 @@ const register = async (req, res) => {
       console.error('Failed to create user registration notification:', err)
     );
 
-    // Send welcome email (only if email is provided)
+    // Send welcome email (non-blocking)
     if (normalizedEmail) {
-      try {
-        await sendWelcomeEmail(normalizedEmail, user.name);
-      } catch (emailError) {
-        console.error('Welcome email error:', emailError);
-        // Don't fail registration if email fails
-      }
+      sendWelcomeEmail(normalizedEmail, user.name).catch(err =>
+        console.error('Failed to send welcome email (background):', err)
+      );
     }
 
     // Generate token
