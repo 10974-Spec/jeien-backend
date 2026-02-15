@@ -22,12 +22,17 @@ const authorize = (roles = []) => {
     roles = [roles];
   }
 
+  // Normalize allowed roles to uppercase
+  const allowedRoles = roles.map(role => role.toUpperCase());
+
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ message: 'Authentication required' });
     }
 
-    if (roles.length && !roles.includes(req.user.role)) {
+    const userRole = req.user.role ? req.user.role.toUpperCase() : '';
+
+    if (allowedRoles.length && !allowedRoles.includes(userRole)) {
       return res.status(403).json({ message: 'Not authorized to access this route' });
     }
 

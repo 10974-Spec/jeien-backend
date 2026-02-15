@@ -153,6 +153,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/logs', require('./modules/logs/log.routes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

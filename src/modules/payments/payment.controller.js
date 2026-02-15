@@ -2,6 +2,7 @@ const Order = require('../orders/order.model');
 const Vendor = require('../vendors/vendor.model');
 const mpesaService = require('../../utils/mpesa.service');
 const smsService = require('../../utils/sms.service');
+const logger = require('../../utils/log.service');
 
 const processMpesaPayment = async (req, res) => {
   try {
@@ -552,12 +553,12 @@ const handlePaymentWebhook = async (req, res) => {
 
     // Auto-detect M-Pesa callback
     if (!provider && req.body.Body && req.body.Body.stkCallback) {
-      console.log('✅ Auto-detected M-Pesa callback format');
+      logger.info('PAYMENT', '✅ Auto-detected M-Pesa callback format');
       provider = 'MPESA';
       data = req.body;
     }
 
-    console.log(`Payment webhook received from ${provider}:`, JSON.stringify(data, null, 2));
+    logger.info('PAYMENT', `Payment webhook received from ${provider}`, data);
 
     switch (provider) {
       case 'MPESA':
@@ -570,8 +571,7 @@ const handlePaymentWebhook = async (req, res) => {
         await handleStripeWebhook(data);
         break;
       default:
-        console.warn(`Unknown payment provider webhook: ${provider}`);
-        console.warn('Request body:', JSON.stringify(req.body, null, 2));
+        logger.warn('PAYMENT', `Unknown payment provider webhook: ${provider}`, req.body);
     }
 
     // Always return 200 to acknowledge receipt
@@ -582,7 +582,7 @@ const handlePaymentWebhook = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Payment webhook processing error:', error);
+    logger.error('PAYMENT', 'Payment webhook processing error', { error: error.message, stack: error.stack });
     if (!res.headersSent) {
       res.status(500).json({
         success: false,
@@ -595,11 +595,9 @@ const handlePaymentWebhook = async (req, res) => {
 
 const handleMpesaWebhook = async (data) => {
   try {
-    console.log('Handling M-Pesa webhook (simulated):', data);
-
     // For development, simulate successful payment
     if (process.env.NODE_ENV === 'development') {
-      console.log('[DEV] Simulating M-Pesa payment completion');
+      logger.info('PAYMENT', '[DEV] Simulating M-Pesa payment completion');
 
       // Try to find order by reference in AccountReference
       const reference = data?.Body?.stkCallback?.CheckoutRequestID ||
@@ -623,7 +621,7 @@ const handleMpesaWebhook = async (data) => {
 
         await order.save();
 
-        console.log(`Order ${order.orderId} marked as COMPLETED via simulated webhook`);
+        logger.info('ORDER', `Order ${order.orderId} marked as COMPLETED via simulated webhook`);
 
         // Populate buyer for SMS
         await order.populate('buyer', 'name email phone');
@@ -632,50 +630,46 @@ const handleMpesaWebhook = async (data) => {
         try {
           const smsResult = await smsService.sendPaymentConfirmationSMS(order, order.buyer);
           if (smsResult.success) {
-            console.log(`SMS sent to customer for order ${order.orderId}`);
+            logger.info('SYSTEM', `SMS sent to customer for order ${order.orderId}`);
           } else {
-            console.warn(`Failed to send SMS for order ${order.orderId}:`, smsResult.error);
+            logger.warn('SYSTEM', `Failed to send SMS for order ${order.orderId}`, smsResult.error);
           }
         } catch (smsError) {
-          console.error('SMS sending error:', smsError);
+          logger.error('SYSTEM', 'SMS sending error', smsError);
           // Don't fail the webhook if SMS fails
         }
 
-        // Simulate vendor payout
         await simulateVendorPayout(order);
+
+        return;
       }
-
-      return;
     }
-
 
     // Real M-Pesa webhook handling (for production)
     const { Body } = data;
     const stkCallback = Body?.stkCallback;
 
-    console.log('========================================');
-    console.log('M-PESA WEBHOOK RECEIVED');
-    console.log('========================================');
-    console.log('Full webhook data:', JSON.stringify(data, null, 2));
+    logger.info('PAYMENT', 'M-PESA WEBHOOK RECEIVED', data);
 
     if (!stkCallback) {
-      console.error('❌ Invalid M-Pesa webhook data structure');
-      console.error('Expected Body.stkCallback but got:', data);
+      logger.error('PAYMENT', '❌ Invalid M-Pesa webhook data structure', data);
       return;
     }
 
     const { CheckoutRequestID, ResultCode, ResultDesc, CallbackMetadata } = stkCallback;
 
-    console.log('📋 M-Pesa Callback Details:');
-    console.log('   CheckoutRequestID:', CheckoutRequestID);
-    console.log('   ResultCode:', ResultCode);
-    console.log('   ResultDesc:', ResultDesc);
-    console.log('   CallbackMetadata:', CallbackMetadata);
+    logger.info('PAYMENT', '📋 M-Pesa Callback Details', {
+      CheckoutRequestID,
+      ResultCode,
+      ResultDesc
+    });
 
     if (ResultCode !== 0) {
-      console.error(`❌ M-Pesa payment failed: ${ResultDesc}`);
-      console.error('   CheckoutRequestID:', CheckoutRequestID);
-      console.error('   ResultCode:', ResultCode);
+      logger.error('PAYMENT', `❌ M-Pesa payment failed: ${ResultDesc}`, {
+        CheckoutRequestID,
+        ResultCode,
+        ResultDesc
+      });
 
       // Try to find and update the failed order
       const order = await Order.findOne({
@@ -689,9 +683,9 @@ const handleMpesaWebhook = async (data) => {
         order.paymentDetails.errorDescription = ResultDesc;
         await order.save();
 
-        console.log(`✅ Order ${order.orderId} marked as FAILED`);
+        logger.info('ORDER', `✅ Order ${order.orderId} marked as FAILED`);
       } else {
-        console.error(`❌ Could not find order to mark as failed for transaction: ${CheckoutRequestID}`);
+        logger.error('PAYMENT', `❌ Could not find order to mark as failed for transaction: ${CheckoutRequestID}`);
       }
 
       return;
@@ -705,18 +699,17 @@ const handleMpesaWebhook = async (data) => {
       });
     }
 
-    console.log('💰 Payment Metadata:', metadata);
+    logger.info('PAYMENT', '💰 Payment Metadata', metadata);
 
     // Try multiple strategies to find the order
-    console.log('🔍 Searching for order with transaction ID:', CheckoutRequestID);
+    logger.info('PAYMENT', '🔍 Searching for order', { transactionId: CheckoutRequestID });
 
     let order = await Order.findOne({
       'paymentDetails.transactionId': CheckoutRequestID
     });
 
     if (!order) {
-      console.warn('⚠️  Order not found by exact transaction ID match');
-      console.log('🔍 Trying alternative search: case-insensitive');
+      logger.warn('PAYMENT', '⚠️  Order not found by exact transaction ID match');
 
       // Try case-insensitive search
       order = await Order.findOne({
@@ -725,8 +718,7 @@ const handleMpesaWebhook = async (data) => {
     }
 
     if (!order) {
-      console.warn('⚠️  Order not found by case-insensitive match');
-      console.log('🔍 Trying alternative search: by phone number and amount');
+      logger.warn('PAYMENT', '⚠️  Order not found by case-insensitive match');
 
       // Try to find by phone number and amount (last resort)
       if (metadata.PhoneNumber && metadata.Amount) {
@@ -739,38 +731,19 @@ const handleMpesaWebhook = async (data) => {
 
         if (recentOrders.length > 0) {
           order = recentOrders[0];
-          console.log('✅ Found order by phone number and amount match');
+          logger.info('PAYMENT', '✅ Found order by phone number and amount match', { orderId: order.orderId });
         }
       }
     }
 
     if (!order) {
-      console.error('❌ ORDER NOT FOUND - All search strategies failed');
-      console.error('   CheckoutRequestID:', CheckoutRequestID);
-      console.error('   Phone:', metadata.PhoneNumber);
-      console.error('   Amount:', metadata.Amount);
-
-      // Log all recent PROCESSING orders for debugging
-      const recentProcessing = await Order.find({
-        paymentStatus: 'PROCESSING',
-        createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) } // Last hour
-      }).select('orderId paymentDetails.transactionId paymentDetails.phoneNumber totalAmount createdAt');
-
-      console.error('📋 Recent PROCESSING orders (last hour):');
-      recentProcessing.forEach(o => {
-        console.error(`   - Order: ${o.orderId}`);
-        console.error(`     Transaction ID: ${o.paymentDetails?.transactionId}`);
-        console.error(`     Phone: ${o.paymentDetails?.phoneNumber}`);
-        console.error(`     Amount: ${o.totalAmount}`);
-        console.error(`     Created: ${o.createdAt}`);
+      logger.error('PAYMENT', '❌ ORDER NOT FOUND - All search strategies failed', {
+        CheckoutRequestID,
+        Phone: metadata.PhoneNumber,
+        Amount: metadata.Amount
       });
-
       return;
     }
-
-    console.log('✅ Order found:', order.orderId);
-    console.log('   Current Payment Status:', order.paymentStatus);
-    console.log('   Current Order Status:', order.status);
 
     // Update order with payment details
     order.paymentStatus = 'COMPLETED';
@@ -784,10 +757,12 @@ const handleMpesaWebhook = async (data) => {
 
     await order.save();
 
-    console.log('✅ Order updated successfully');
-    console.log('   New Payment Status:', order.paymentStatus);
-    console.log('   New Order Status:', order.status);
-    console.log('   Receipt Number:', metadata.MpesaReceiptNumber);
+    logger.info('ORDER', '✅ Order updated successfully', {
+      orderId: order.orderId,
+      newPaymentStatus: order.paymentStatus,
+      newOrderStatus: order.status,
+      receipt: metadata.MpesaReceiptNumber
+    });
 
     // Populate buyer for SMS
     await order.populate('buyer', 'name email phone');
@@ -796,34 +771,28 @@ const handleMpesaWebhook = async (data) => {
     try {
       const smsResult = await smsService.sendPaymentConfirmationSMS(order, order.buyer);
       if (smsResult.success) {
-        console.log(`📱 SMS sent to customer for order ${order.orderId}`);
+        logger.info('SYSTEM', `📱 SMS sent to customer for order ${order.orderId}`);
       } else {
-        console.warn(`⚠️  Failed to send SMS for order ${order.orderId}:`, smsResult.error);
+        logger.warn('SYSTEM', `⚠️  Failed to send SMS for order ${order.orderId}`, smsResult.error);
       }
     } catch (smsError) {
-      console.error('❌ SMS sending error:', smsError);
+      logger.error('SYSTEM', '❌ SMS sending error', smsError);
       // Don't fail the webhook if SMS fails
     }
 
     await simulateVendorPayout(order);
 
-    console.log('========================================');
-    console.log('M-PESA WEBHOOK COMPLETED SUCCESSFULLY');
-    console.log(`Order: ${order.orderId}`);
-    console.log(`Receipt: ${metadata.MpesaReceiptNumber}`);
-    console.log(`Amount: ${metadata.Amount}`);
-    console.log('========================================');
+    logger.info('PAYMENT', 'M-PESA WEBHOOK COMPLETED SUCCESSFULLY', {
+      orderId: order.orderId,
+      receipt: metadata.MpesaReceiptNumber
+    });
 
   } catch (error) {
-    console.error('========================================');
-    console.error('❌ M-PESA WEBHOOK ERROR');
-    console.error('========================================');
-    console.error('Error:', error);
-    console.error('Stack:', error.stack);
-    console.error('========================================');
+    logger.error('PAYMENT', '❌ M-PESA WEBHOOK ERROR', { error: error.message, stack: error.stack });
     // Don't throw error to prevent webhook retries
   }
 };
+
 
 const handlePayPalWebhook = async (data) => {
   try {

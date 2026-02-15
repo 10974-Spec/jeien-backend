@@ -11,7 +11,7 @@ const generateInvoicePDF = async (orderId) => {
     // Fetch order with populated fields
     const order = await Order.findById(orderId)
         .populate('buyer', 'name email phone')
-        .populate('items.product', 'name price')
+        .populate('items.productId', 'title price')
         .populate('vendorIds', 'businessName');
 
     if (!order) {
@@ -62,17 +62,18 @@ const generateInvoicePDF = async (orderId) => {
         .text(order.buyer?.phone || 'N/A', 50, 204);
 
     // Shipping Address
-    if (order.shippingAddress) {
+    if (order.deliveryAddress) {
+        const address = order.deliveryAddress;
         doc
             .fontSize(12)
             .font('Helvetica-Bold')
             .text('Ship To:', 300, 160)
             .fontSize(10)
             .font('Helvetica')
-            .text(order.shippingAddress.fullName || order.buyer?.name, 300, 178)
-            .text(order.shippingAddress.address || 'N/A', 300, 191)
-            .text(`${order.shippingAddress.city || ''}, ${order.shippingAddress.postalCode || ''}`, 300, 204)
-            .text(order.shippingAddress.phone || '', 300, 217);
+            .text(address.fullName || order.buyer?.name || 'N/A', 300, 178)
+            .text(address.street || address.address || 'N/A', 300, 191)
+            .text(`${address.city || ''}, ${address.postalCode || ''}`, 300, 204)
+            .text(address.phone || '', 300, 217);
     }
 
     // Items table header
@@ -95,21 +96,30 @@ const generateInvoicePDF = async (orderId) => {
     let yPosition = tableTop + 25;
     doc.font('Helvetica');
 
-    order.items.forEach((item, index) => {
-        const itemName = item.product?.name || item.name || 'Product';
-        const quantity = item.quantity || 1;
-        const price = item.price || 0;
-        const total = quantity * price;
+    if (order.items && order.items.length > 0) {
+        order.items.forEach((item, index) => {
+            // Use snapshot title first, fall back to populated product title
+            const itemName = item.title || item.productId?.title || 'Product';
+            const quantity = item.quantity || 1;
+            const price = item.price || item.productId?.price || 0;
+            const total = quantity * price;
 
-        doc
-            .fontSize(10)
-            .text(itemName, 50, yPosition, { width: 230 })
-            .text(quantity.toString(), 300, yPosition, { width: 50, align: 'center' })
-            .text(`KES ${price.toLocaleString()}`, 370, yPosition, { width: 80, align: 'right' })
-            .text(`KES ${total.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
+            // Check if we need a new page
+            if (yPosition > 700) {
+                doc.addPage();
+                yPosition = 50;
+            }
 
-        yPosition += 25;
-    });
+            doc
+                .fontSize(10)
+                .text(itemName, 50, yPosition, { width: 230 })
+                .text(quantity.toString(), 300, yPosition, { width: 50, align: 'center' })
+                .text(`KES ${price.toLocaleString()}`, 370, yPosition, { width: 80, align: 'right' })
+                .text(`KES ${total.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
+
+            yPosition += 25;
+        });
+    }
 
     // Line before totals
     yPosition += 10;
@@ -120,26 +130,30 @@ const generateInvoicePDF = async (orderId) => {
 
     // Totals section
     yPosition += 20;
-    const subtotal = order.totalAmount || 0;
+    const subtotal = order.subtotal || order.totalAmount || 0;
+
+    // Calculate commission details safely
     const commissionRate = order.commissionDetails?.rate || 7;
-    const adminCommission = order.commissionDetails?.adminAmount || (subtotal * (commissionRate / 100));
-    const vendorAmount = order.commissionDetails?.vendorAmount || (subtotal - adminCommission);
+    // Ensure numeric values
+    const safeSubtotal = Number(subtotal) || 0;
+    const adminCommission = order.commissionDetails?.adminAmount || (safeSubtotal * (commissionRate / 100));
+    const vendorAmount = order.commissionDetails?.vendorAmount || (safeSubtotal - adminCommission);
 
     doc
         .fontSize(10)
         .font('Helvetica')
         .text('Subtotal:', 370, yPosition, { width: 100, align: 'left' })
-        .text(`KES ${subtotal.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
+        .text(`KES ${safeSubtotal.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
 
     yPosition += 20;
     doc
         .text(`Admin Commission (${commissionRate}%):`, 370, yPosition, { width: 100, align: 'left' })
-        .text(`KES ${adminCommission.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
+        .text(`KES ${Number(adminCommission).toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
 
     yPosition += 20;
     doc
         .text(`Vendor Amount (${100 - commissionRate}%):`, 370, yPosition, { width: 100, align: 'left' })
-        .text(`KES ${vendorAmount.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
+        .text(`KES ${Number(vendorAmount).toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
 
     yPosition += 10;
     doc
@@ -152,7 +166,7 @@ const generateInvoicePDF = async (orderId) => {
         .fontSize(12)
         .font('Helvetica-Bold')
         .text('TOTAL:', 370, yPosition, { width: 100, align: 'left' })
-        .text(`KES ${subtotal.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
+        .text(`KES ${safeSubtotal.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
 
     // Payment information
     yPosition += 40;
