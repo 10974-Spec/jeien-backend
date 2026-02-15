@@ -9,18 +9,18 @@ const rateLimit = require('express-rate-limit');
 const updateRateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 10, // limit each IP to 10 requests per windowMs
-  message: { 
+  message: {
     success: false,
-    message: 'Too many update requests, please try again later' 
+    message: 'Too many update requests, please try again later'
   }
 });
 
 const createRateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 5, // limit each IP to 5 requests per windowMs
-  message: { 
+  message: {
     success: false,
-    message: 'Too many create requests, please try again later' 
+    message: 'Too many create requests, please try again later'
   }
 });
 
@@ -40,11 +40,11 @@ const {
 router.post('/', authenticate, vendorOrAdmin, createRateLimiter, multipleUpload, createProduct);
 router.get('/', getAllProducts);
 router.get('/search', searchProducts);
+router.get('/vendor/my', authenticate, vendorOrAdmin, getVendorProducts); // Moved before /:id
 router.get('/:id', getProductById);
 router.put('/:id', authenticate, vendorOrAdmin, updateRateLimiter, multipleUpload, updateProduct);
 router.delete('/:id', authenticate, vendorOrAdmin, deleteProduct);
 
-router.get('/vendor/my', authenticate, vendorOrAdmin, getVendorProducts);
 router.put('/:id/stock', authenticate, vendorOrAdmin, updateProductStock);
 router.put('/bulk/update', authenticate, vendorOrAdmin, bulkUpdateProducts);
 

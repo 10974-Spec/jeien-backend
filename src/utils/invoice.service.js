@@ -145,16 +145,6 @@ const generateInvoicePDF = async (orderId) => {
         .text('Subtotal:', 370, yPosition, { width: 100, align: 'left' })
         .text(`KES ${safeSubtotal.toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
 
-    yPosition += 20;
-    doc
-        .text(`Admin Commission (${commissionRate}%):`, 370, yPosition, { width: 100, align: 'left' })
-        .text(`KES ${Number(adminCommission).toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
-
-    yPosition += 20;
-    doc
-        .text(`Vendor Amount (${100 - commissionRate}%):`, 370, yPosition, { width: 100, align: 'left' })
-        .text(`KES ${Number(vendorAmount).toLocaleString()}`, 470, yPosition, { width: 80, align: 'right' });
-
     yPosition += 10;
     doc
         .moveTo(370, yPosition)
