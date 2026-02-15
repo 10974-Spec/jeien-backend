@@ -279,7 +279,7 @@ const getVendorStats = async (req, res) => {
         totalRevenue: revenueStats[0]?.totalRevenue || 0,
         totalCommission: revenueStats[0]?.totalCommission || 0,
         netRevenue: revenueStats[0]?.netRevenue || 0,
-        commissionRate: vendor.commissionRate || process.env.DEFAULT_COMMISSION_RATE || 10
+        commissionRate: req.user.role === 'ADMIN' ? 0 : (vendor.commissionRate || process.env.DEFAULT_COMMISSION_RATE || 7)
       },
       performance: {
         dailySales,

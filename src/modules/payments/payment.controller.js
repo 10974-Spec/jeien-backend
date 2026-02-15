@@ -377,13 +377,43 @@ const simulateVendorPayout = async (order) => {
   try {
     console.log(`Processing vendor payout for order ${order.orderId}`);
 
-    // Calculate commission (7% admin, 93% vendor)
-    const commissionRate = parseFloat(process.env.DEFAULT_COMMISSION_RATE || 7);
+    // Get vendor details to find payout phone number and check if admin
+    const Vendor = require('../vendors/vendor.model');
+    const vendors = await Vendor.find({ _id: { $in: order.vendorIds } }).populate('user');
+
+    if (vendors.length === 0) {
+      console.log('No vendor found for payout');
+      return { success: false, error: 'No vendor found' };
+    }
+
+    // For now, we'll use the first vendor
+    const vendor = vendors[0];
+
+    // Check if vendor is admin
+    // Assuming 'admin' role or specific admin email checks
+    const isAdminVendor = vendor.user?.role === 'ADMIN' || vendor.user?.email === 'admin@example.com';
+
+    // Calculate commission
+    // If admin vendor, 0% commission (they keep 100%)
+    // If regular vendor, standard commission (default 7%)
+    const defaultRate = parseFloat(process.env.DEFAULT_COMMISSION_RATE || 7);
+    let commissionRate;
+
+    if (isAdminVendor) {
+      commissionRate = 0;
+    } else {
+      commissionRate = vendor.commissionRate !== undefined && vendor.commissionRate !== null
+        ? vendor.commissionRate
+        : defaultRate;
+    }
+
     const adminCommission = parseFloat((order.totalAmount * (commissionRate / 100)).toFixed(2));
     const vendorPayout = parseFloat((order.totalAmount - adminCommission).toFixed(2));
 
     console.log('Commission breakdown:', {
       totalAmount: order.totalAmount,
+      vendor: vendor.storeName,
+      isAdmin: isAdminVendor,
       commissionRate: `${commissionRate}%`,
       adminCommission,
       vendorPayout
@@ -399,17 +429,6 @@ const simulateVendorPayout = async (order) => {
     };
     await order.save();
 
-    // Get vendor details to find payout phone number
-    const Vendor = require('../vendors/vendor.model');
-    const vendors = await Vendor.find({ _id: { $in: order.vendorIds } });
-
-    if (vendors.length === 0) {
-      console.log('No vendor found for payout');
-      return { success: false, error: 'No vendor found' };
-    }
-
-    // For now, we'll use the first vendor's phone number
-    const vendor = vendors[0];
     const vendorPhone = vendor.bankDetails?.phoneNumber;
     const adminShortcode = process.env.MPESA_SHORTCODE;
 
@@ -418,23 +437,29 @@ const simulateVendorPayout = async (order) => {
       return { success: false, error: 'Vendor phone number not configured' };
     }
 
-    console.log(`Initiating payouts:
-      - Vendor (${vendorPhone}): KES ${vendorPayout} (93%)
-      - Admin (${adminShortcode}): KES ${adminCommission} (7%)`);
+    // Process payouts
+    let vendorPayoutResult = { data: { transactionId: null } };
+    let adminPayoutResult = { data: { transactionId: null } };
 
-    // Process vendor payout (90%)
-    const vendorPayoutResult = await processMpesaPayout(
-      vendorPhone,
-      vendorPayout,
-      `Vendor-${order.orderId}`
-    );
+    // 1. Process Vendor Payout (Full amount if Admin, or Net amount if Vendor)
+    if (vendorPayout > 0) {
+      console.log(`Initiating Vendor Payout (${vendorPhone}): KES ${vendorPayout}`);
+      vendorPayoutResult = await processMpesaPayout(
+        vendorPhone,
+        vendorPayout,
+        `Vendor-${order.orderId}`
+      );
+    }
 
-    // Process admin commission (10%)
-    const adminPayoutResult = await processMpesaPayout(
-      adminShortcode,
-      adminCommission,
-      `Admin-${order.orderId}`
-    );
+    // 2. Process Admin Commission (Only if commission > 0)
+    if (adminCommission > 0) {
+      console.log(`Initiating Admin Commission (${adminShortcode}): KES ${adminCommission}`);
+      adminPayoutResult = await processMpesaPayout(
+        adminShortcode,
+        adminCommission,
+        `Admin-${order.orderId}`
+      );
+    }
 
     // Update order with transaction IDs
     order.commissionDetails.processed = true;
