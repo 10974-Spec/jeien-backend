@@ -319,6 +319,14 @@ const getAllVendors = async (req, res) => {
 
     const total = await Vendor.countDocuments(filter);
 
+    console.log('getAllVendors Debug:', {
+      user: req.user.id,
+      role: req.user.role,
+      filter,
+      found: vendors.length,
+      total
+    });
+
     res.json({
       vendors,
       pagination: {
