@@ -150,7 +150,7 @@ const createProduct = async (req, res) => {
       stock: parseInt(stock) || 0,
       category: categoryExists._id,
       vendor: vendor._id,
-      approved: req.user.role === 'ADMIN' || (vendor.settings?.autoApproveProducts) || false,
+      approved: true, // Auto-approve all products as requested
       attributes: attributes ? JSON.parse(attributes) : [],
       specifications: specifications ? JSON.parse(specifications) : [],
       tags: tags ? JSON.parse(tags).map(tag => tag.trim().toLowerCase()) : []
@@ -249,9 +249,7 @@ const createProduct = async (req, res) => {
     }
 
     // Send response
-    const responseMessage = req.user.role === 'ADMIN' ?
-      'Product created successfully' :
-      'Product created. Waiting for approval.';
+    const responseMessage = 'Product created successfully';
 
     debugLog('=== CREATE PRODUCT COMPLETED SUCCESSFULLY ===');
 

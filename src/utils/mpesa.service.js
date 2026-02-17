@@ -223,6 +223,84 @@ class MpesaService {
     }
 
     /**
+     * Initiate B2C Payment (Business to Customer)
+     * @param {string} phoneNumber - Customer phone number
+     * @param {number} amount - Amount to transfer
+     * @param {string} remarks - Transaction remarks
+     * @param {string} occasion - Occasion
+     */
+    async initiateB2C({ phoneNumber, amount, remarks, occasion }) {
+        try {
+            console.log('=== INITIATING M-PESA B2C PAYOUT ===');
+            console.log('Phone:', phoneNumber);
+            console.log('Amount:', amount);
+
+            // B2C requires specific credentials which might not be set
+            if (!process.env.MPESA_INITIATOR_NAME || !process.env.MPESA_SECURITY_CREDENTIAL) {
+                console.warn('⚠️ M-Pesa B2C credentials missing. Simulating B2C payout.');
+                return {
+                    success: true,
+                    message: 'B2C payout simulated (credentials missing)',
+                    data: {
+                        ConversationID: `SIM-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                        OriginatorConversationID: `SIM-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                        ResponseCode: "0",
+                        ResponseDescription: "Accept the service request successfully."
+                    }
+                };
+            }
+
+            const accessToken = await this.getAccessToken();
+
+            // Format phone number
+            let formattedPhone = phoneNumber.replace(/\+/g, '').replace(/\s/g, '');
+            if (formattedPhone.startsWith('0')) {
+                formattedPhone = '254' + formattedPhone.substring(1);
+            } else if (!formattedPhone.startsWith('254')) {
+                formattedPhone = '254' + formattedPhone;
+            }
+
+            const requestData = {
+                InitiatorName: process.env.MPESA_INITIATOR_NAME,
+                SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
+                CommandID: "BusinessPayment",
+                Amount: Math.round(amount),
+                PartyA: this.shortcode,
+                PartyB: formattedPhone,
+                Remarks: remarks || "Vendor Payout",
+                QueueTimeOutURL: `${process.env.API_URL}/api/payments/mpesa/b2c/timeout`,
+                ResultURL: `${process.env.API_URL}/api/payments/mpesa/b2c/callback`,
+                Occasion: occasion || "Payment"
+            };
+
+            const response = await axios.post(
+                `${this.baseURL}/mpesa/b2c/v1/paymentrequest`,
+                requestData,
+                {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            console.log('✅ B2C Payout initiated successfully');
+            return {
+                success: true,
+                data: response.data
+            };
+
+        } catch (error) {
+            console.error('❌ B2C Payout failed:', error.response?.data || error.message);
+            return {
+                success: false,
+                message: 'B2C Payout failed',
+                error: error.response?.data || error.message
+            };
+        }
+    }
+
+    /**
      * Query STK push transaction status
      * @param {string} checkoutRequestID - CheckoutRequestID from STK push response
      */

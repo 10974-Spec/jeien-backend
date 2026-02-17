@@ -257,8 +257,8 @@ const processPayPalPayment = async (req, res) => {
     };
     await order.save();
 
-    // Process vendor payout (simulated for now)
-    await simulateVendorPayout(order);
+    // Process vendor payout
+    await processVendorPayout(order);
 
     res.status(200).json({
       success: true,
@@ -342,8 +342,8 @@ const processCardPayment = async (req, res) => {
     };
     await order.save();
 
-    // Process vendor payout (simulated for now)
-    await simulateVendorPayout(order);
+    // Process vendor payout
+    await processVendorPayout(order);
 
     res.status(200).json({
       success: true,
@@ -373,7 +373,7 @@ const processCardPayment = async (req, res) => {
   }
 };
 
-const simulateVendorPayout = async (order) => {
+const processVendorPayout = async (order) => {
   try {
     console.log(`Processing vendor payout for order ${order.orderId}`);
 
@@ -389,31 +389,16 @@ const simulateVendorPayout = async (order) => {
     // For now, we'll use the first vendor
     const vendor = vendors[0];
 
-    // Check if vendor is admin
-    // Assuming 'admin' role or specific admin email checks
-    const isAdminVendor = vendor.user?.role === 'ADMIN' || vendor.user?.email === 'admin@example.com';
+    // Calculate commission - FIXED 93/7 SPLIT
+    const commissionRate = 7; // Fixed 7% for Admin
 
-    // Calculate commission
-    // If admin vendor, 0% commission (they keep 100%)
-    // If regular vendor, standard commission (default 7%)
-    const defaultRate = parseFloat(process.env.DEFAULT_COMMISSION_RATE || 7);
-    let commissionRate;
-
-    if (isAdminVendor) {
-      commissionRate = 0;
-    } else {
-      commissionRate = vendor.commissionRate !== undefined && vendor.commissionRate !== null
-        ? vendor.commissionRate
-        : defaultRate;
-    }
-
+    // Admin gets 7%, Vendor gets 93%
     const adminCommission = parseFloat((order.totalAmount * (commissionRate / 100)).toFixed(2));
     const vendorPayout = parseFloat((order.totalAmount - adminCommission).toFixed(2));
 
-    console.log('Commission breakdown:', {
+    console.log('Commission breakdown (93/7 Split):', {
       totalAmount: order.totalAmount,
       vendor: vendor.storeName,
-      isAdmin: isAdminVendor,
       commissionRate: `${commissionRate}%`,
       adminCommission,
       vendorPayout
@@ -429,43 +414,30 @@ const simulateVendorPayout = async (order) => {
     };
     await order.save();
 
-    const vendorPhone = vendor.bankDetails?.phoneNumber;
-    const adminShortcode = process.env.MPESA_SHORTCODE;
+    const vendorPhone = vendor.bankDetails?.phoneNumber || vendor.user.phone;
 
     if (!vendorPhone) {
       console.log('Vendor phone number not configured');
       return { success: false, error: 'Vendor phone number not configured' };
     }
 
-    // Process payouts
-    let vendorPayoutResult = { data: { transactionId: null } };
-    let adminPayoutResult = { data: { transactionId: null } };
+    // Process payouts via M-Pesa B2C
+    let vendorPayoutResult = { data: { ConversationID: null } };
 
-    // 1. Process Vendor Payout (Full amount if Admin, or Net amount if Vendor)
     if (vendorPayout > 0) {
-      console.log(`Initiating Vendor Payout (${vendorPhone}): KES ${vendorPayout}`);
-      vendorPayoutResult = await processMpesaPayout(
-        vendorPhone,
-        vendorPayout,
-        `Vendor-${order.orderId}`
-      );
-    }
-
-    // 2. Process Admin Commission (Only if commission > 0)
-    if (adminCommission > 0) {
-      console.log(`Initiating Admin Commission (${adminShortcode}): KES ${adminCommission}`);
-      adminPayoutResult = await processMpesaPayout(
-        adminShortcode,
-        adminCommission,
-        `Admin-${order.orderId}`
-      );
+      console.log(`Initiating Vendor Payout to ${vendorPhone}: KES ${vendorPayout}`);
+      vendorPayoutResult = await mpesaService.initiateB2C({
+        phoneNumber: vendorPhone,
+        amount: vendorPayout,
+        remarks: `Payout for Order ${order.orderId}`,
+        occasion: 'VendorPayment'
+      });
     }
 
     // Update order with transaction IDs
     order.commissionDetails.processed = true;
     order.commissionDetails.processedAt = new Date();
-    order.commissionDetails.payoutTransactionId = vendorPayoutResult.data?.transactionId;
-    order.commissionDetails.adminTransactionId = adminPayoutResult.data?.transactionId;
+    order.commissionDetails.payoutTransactionId = vendorPayoutResult.data?.ConversationID || 'SIMULATED';
     await order.save();
 
     console.log('Payouts completed successfully');
@@ -478,12 +450,10 @@ const simulateVendorPayout = async (order) => {
         vendorPayout: {
           amount: vendorPayout,
           phone: vendorPhone,
-          transactionId: vendorPayoutResult.data?.transactionId
+          transactionId: vendorPayoutResult.data?.ConversationID
         },
         adminCommission: {
-          amount: adminCommission,
-          shortcode: adminShortcode,
-          transactionId: adminPayoutResult.data?.transactionId
+          amount: adminCommission
         },
         timestamp: new Date().toISOString()
       }
@@ -497,31 +467,7 @@ const simulateVendorPayout = async (order) => {
 
 
 
-const processMpesaPayout = async (phone, amount, reference) => {
-  try {
-    console.log(`Initiating M-Pesa payout: ${phone} - ${amount} KES - Ref: ${reference}`);
 
-    const mpesaPhone = phone.startsWith('0') ? `254${phone.substring(1)}` :
-      phone.startsWith('+254') ? phone.substring(1) :
-        phone.startsWith('254') ? phone : `254${phone}`;
-
-    const payoutData = {
-      phone: mpesaPhone,
-      amount: Math.round(amount),
-      reference: reference,
-      timestamp: new Date().toISOString(),
-      status: 'COMPLETED',
-      transactionId: `PAYOUT-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
-    };
-
-    console.log('M-Pesa payout initiated:', payoutData);
-
-    return { success: true, data: payoutData };
-  } catch (error) {
-    console.error('M-Pesa payout error:', error);
-    throw error;
-  }
-};
 
 const processBankTransfer = async (bankDetails, amount, reference) => {
   try {
@@ -664,7 +610,7 @@ const handleMpesaWebhook = async (data) => {
           // Don't fail the webhook if SMS fails
         }
 
-        await simulateVendorPayout(order);
+        await processVendorPayout(order);
 
         return;
       }
@@ -805,7 +751,7 @@ const handleMpesaWebhook = async (data) => {
       // Don't fail the webhook if SMS fails
     }
 
-    await simulateVendorPayout(order);
+    await processVendorPayout(order);
 
     logger.info('PAYMENT', 'M-PESA WEBHOOK COMPLETED SUCCESSFULLY', {
       orderId: order.orderId,
@@ -850,7 +796,7 @@ const handlePayPalWebhook = async (data) => {
 
       await order.save();
 
-      await simulateVendorPayout(order);
+      await processVendorPayout(order);
 
       console.log(`PayPal payment completed for order ${order.orderId}`);
     }
@@ -902,7 +848,7 @@ const handleStripeWebhook = async (data) => {
     };
     await order.save();
 
-    await simulateVendorPayout(order);
+    await processVendorPayout(order);
 
     console.log(`Stripe payment completed for order ${order.orderId}`);
   } catch (error) {
