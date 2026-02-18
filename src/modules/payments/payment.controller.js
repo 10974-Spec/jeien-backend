@@ -632,11 +632,15 @@ const handleMpesaWebhook = async (data) => {
     logger.info('PAYMENT', '📋 M-Pesa Callback Details', {
       CheckoutRequestID,
       ResultCode,
+      ResultCodeType: typeof ResultCode,
       ResultDesc
     });
 
-    if (ResultCode !== 0) {
-      logger.error('PAYMENT', `❌ M-Pesa payment failed: ${ResultDesc}`, {
+    // Handle string or number ResultCode
+    const numericResultCode = Number(ResultCode);
+
+    if (numericResultCode !== 0) {
+      logger.error('PAYMENT', `❌ M-Pesa payment failed: ${ResultDesc} (Code: ${ResultCode})`, {
         CheckoutRequestID,
         ResultCode,
         ResultDesc
