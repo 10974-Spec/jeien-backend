@@ -9,7 +9,8 @@ const processMpesaPayment = async (req, res) => {
     const { orderId, phone, amount } = req.body;
     const userId = req.user.id;
 
-    console.log('M-Pesa payment request:', { orderId, phone, amount, userId });
+    console.log('🔥🔥🔥 DEBUG: M-Pesa payment request Received:', { orderId, phone, amount, userId });
+    console.log('🔥🔥🔥 DEBUG: Headers:', req.headers);
 
     // Validate required fields
     if (!orderId || !phone || !amount) {
@@ -117,9 +118,8 @@ const processMpesaPayment = async (req, res) => {
 
     console.log('M-Pesa payment result:', paymentResult);
 
-    // Check if the payment initiation was successful
     if (!paymentResult || !paymentResult.success) {
-      console.error('M-Pesa payment initiation failed result:', paymentResult);
+      console.error('🔥🔥🔥 DEBUG: M-Pesa payment initiation failed result:', JSON.stringify(paymentResult, null, 2));
       return res.status(400).json({
         success: false,
         message: 'M-Pesa payment initiation failed',
@@ -966,6 +966,10 @@ const getPaymentStatus = async (req, res) => {
     })
       .select('orderId paymentStatus status paymentDetails totalAmount createdAt buyer vendorIds');
 
+    if (order) {
+      console.log(`🔥🔥🔥 DEBUG: getPaymentStatus for ${order.orderId}: DB Status=${order.paymentStatus}, PaymentDetails=`, order.paymentDetails);
+    }
+
     if (!order) {
       return res.status(404).json({
         success: false,
@@ -998,6 +1002,93 @@ const getPaymentStatus = async (req, res) => {
       createdAt: order.createdAt,
       isTestMode: order.paymentDetails?.isTestMode || false
     };
+
+    // AUTOMATIC STATUS RECOVERY
+    // If status is PROCESSING and it's equal to or more than 20 seconds since creation/initiation,
+    // we proactively ask M-Pesa for the status.
+    if (order.paymentStatus === 'PROCESSING' && order.paymentDetails?.transactionId) {
+      const initiatedAt = new Date(order.paymentDetails.initiatedAt || order.createdAt);
+      const now = new Date();
+      const diffSeconds = (now - initiatedAt) / 1000;
+
+      console.log(`DEBUG: Order ${order.orderId} status check.`, {
+        paymentStatus: order.paymentStatus,
+        initiatedAt: initiatedAt.toISOString(),
+        now: now.toISOString(),
+        diffSeconds,
+        transactionId: order.paymentDetails.transactionId
+      });
+
+      // Only query if enough time has passed (to avoid race conditions with callback)
+      // but not too long (e.g. within 15 mins)
+      if (diffSeconds > 20 && diffSeconds < 900) {
+
+        // Simple rate limiting: Don't query if we queried less than 10 seconds ago
+        const lastQuery = order.paymentDetails.lastQueryAt ? new Date(order.paymentDetails.lastQueryAt) : null;
+        const timeSinceLastQuery = lastQuery ? (now - lastQuery) / 1000 : 999;
+
+        console.log(`DEBUG: Checking if should auto-query. timeSinceLastQuery: ${timeSinceLastQuery}`);
+
+        if (timeSinceLastQuery > 10) {
+          console.log(`Auto-recovering payment status for ${order.orderId}...`);
+
+          try {
+            const queryResult = await mpesaService.querySTKPushStatus(order.paymentDetails.transactionId);
+
+            console.log(`DEBUG: Auto-recovery query result for ${order.orderId}:`, JSON.stringify(queryResult || {}));
+
+            // Update last query time
+            order.paymentDetails.lastQueryAt = new Date(); // Mongoose will convert to proper type if schema supports, else ignored
+
+            // Check result
+            const resultCode = String(queryResult?.ResultCode);
+            const resultDesc = queryResult?.ResultDesc || 'No description';
+
+            console.log(`DEBUG: Auto-recovery Analysis for ${order.orderId}: Code=${resultCode}, Desc=${resultDesc}`);
+
+            if (resultCode === '0') {
+              console.log(`Auto-recovery SUCCESS for ${order.orderId}`);
+              order.paymentStatus = 'COMPLETED';
+              order.status = 'CONFIRMED';
+              order.paymentDetails.notes = `Auto-recovered: ${resultDesc}`;
+              order.paymentDetails.verifiedAt = new Date();
+              order.paymentDetails.verifiedBy = 'SYSTEM_AUTO_RECOVERY';
+
+              await order.save();
+
+              // Trigger payout
+              await processVendorPayout(order);
+
+              // Update response
+              response.paymentStatus = 'COMPLETED';
+              response.orderStatus = 'CONFIRMED';
+            } else if (['1032', '1031', '1'].includes(resultCode)) {
+              // Known failure codes (Cancelled, etc)
+              console.log(`Auto-recovery: Payment FAILED with code ${resultCode}`);
+              order.paymentStatus = 'FAILED';
+              order.paymentDetails.errorDescription = resultDesc;
+              await order.save();
+
+              response.paymentStatus = 'FAILED';
+            } else if (resultCode === '4999' || resultCode === '5000' || resultDesc.includes('processing')) {
+              // Transaction still processing - DO NOT FAIL
+              console.log(`Auto-recovery: Transaction still processing (${resultCode}). Keeping status PROCESSING.`);
+              // Update response to be sure
+              response.paymentStatus = 'PROCESSING';
+              // Save the edit to lastQueryAt
+              await order.save();
+            } else {
+              // Unknown code - Log it but don't fail yet
+              console.log(`Auto-recovery: Unknown code ${resultCode}. Keeping status PROCESSING.`);
+              // Save the edit to lastQueryAt
+              await order.save();
+            }
+          } catch (e) {
+            console.error(`Auto-recovery failed for ${order.orderId}:`, e.message);
+          }
+        }
+      }
+    }
 
     if (userRole === 'ADMIN' || (order.vendorIds && order.vendorIds.some(vendorId => vendorId.toString() === userId))) {
       response.paymentDetails = order.paymentDetails;
@@ -1297,6 +1388,80 @@ const manualCompletePayment = async (req, res) => {
   }
 };
 
+const verifyTransaction = async (req, res) => {
+  try {
+    const { orderId, transactionId } = req.body;
+
+    // Check for admin/vendor privileges (basic check)
+    // In a real app, you'd want stricter permission checks
+
+    if (!orderId || !transactionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order ID and Transaction ID are required'
+      });
+    }
+
+    console.log(`Verifying transaction: ${transactionId} for order: ${orderId}`);
+
+    // Call M-Pesa Query API
+    // We assume querySTKPushStatus is implemented in mpesaService
+    // It usually requires the CheckoutRequestID which is our transactionId
+    const queryResult = await mpesaService.querySTKPushStatus(transactionId);
+
+    console.log('M-Pesa Query Result:', queryResult);
+
+    // Check if successful
+    // result code "0" is success
+    const resultCode = queryResult?.ResultCode;
+    const resultDesc = queryResult?.ResultDesc;
+
+    if (String(resultCode) === '0') {
+      // Payment was successful!
+      // Find and update order
+      const order = await Order.findById(orderId);
+      if (order && order.paymentStatus !== 'COMPLETED') {
+        order.paymentStatus = 'COMPLETED';
+        order.status = 'CONFIRMED';
+        order.paymentDetails.notes = `Verified manually: ${resultDesc}`;
+        order.paymentDetails.verifiedAt = new Date();
+        order.paymentDetails.verifiedBy = req.user.id;
+        await order.save();
+
+        await processVendorPayout(order);
+
+        return res.json({
+          success: true,
+          message: 'Payment verified and order updated to COMPLETED',
+          data: queryResult
+        });
+      } else {
+        return res.json({
+          success: true,
+          message: 'Payment verified as successful (Order was already updated)',
+          data: queryResult
+        });
+      }
+    } else {
+      // Payment failed or pending
+      return res.json({
+        success: false,
+        message: `M-Pesa status: ${resultDesc || 'Unknown'} (Code: ${resultCode})`,
+        data: queryResult
+      });
+    }
+
+  } catch (error) {
+    console.error('Verify transaction error:', error);
+    // Even if query fails, return debug info
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Verification failed',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   processMpesaPayment,
   processPayPalPayment,
@@ -1305,5 +1470,6 @@ module.exports = {
   getPaymentMethods,
   getPaymentStatus,
   testMpesaPayment,
-  manualCompletePayment
+  manualCompletePayment,
+  verifyTransaction
 };

@@ -1,0 +1,7 @@
+🚀 Starting server...
+📁 Environment: development
+🌐 Frontend URL: http://localhost:5173
+🔧 Node version: v22.20.0
+✅ Connected to MongoDB
+❌ Port 5000 is already in use
+Process exiting with code: 1

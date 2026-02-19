@@ -318,50 +318,13 @@ const createOrder = async (req, res) => {
 
     // Trigger M-Pesa STK Push if payment method is MPESA
     let mpesaResponse = null;
+    /* 
+    // DISABLE AUTO STK PUSH - Let frontend handle it explicitly
     if (paymentMethod === 'MPESA' || paymentMethod === 'M-PESA') {
       debugLog('Initiating M-Pesa STK Push...');
-
-      try {
-        const mpesaService = require('../../utils/mpesa.service');
-
-        // Get buyer's phone number
-        const buyer = await User.findById(req.user.id).select('phone');
-        const phoneNumber = deliveryAddress.phone || buyer?.phone;
-
-        if (!phoneNumber) {
-          debugLog('WARNING: No phone number available for M-Pesa');
-        } else {
-          mpesaResponse = await mpesaService.initiateSTKPush({
-            phoneNumber: phoneNumber,
-            amount: order.totalAmount,
-            accountReference: order.orderId,
-            transactionDesc: `Payment for order ${order.orderId}`,
-            callbackUrl: `${process.env.API_URL}/api/payments/mpesa/callback`
-          });
-
-          debugLog('M-Pesa STK Push response:', mpesaResponse);
-
-          // Update order with M-Pesa details
-          if (mpesaResponse.success) {
-            order.paymentDetails = {
-              provider: 'MPESA',
-              merchantRequestID: mpesaResponse.data.MerchantRequestID,
-              checkoutRequestID: mpesaResponse.data.CheckoutRequestID,
-              responseCode: mpesaResponse.data.ResponseCode,
-              responseDescription: mpesaResponse.data.ResponseDescription
-            };
-            await order.save();
-            debugLog('✅ M-Pesa STK Push sent successfully');
-          } else {
-            debugLog('❌ M-Pesa STK Push failed:', mpesaResponse.message);
-          }
-        }
-      } catch (mpesaError) {
-        debugLog('M-Pesa STK Push error:', mpesaError.message);
-        // Don't fail the order creation if M-Pesa fails
-        // The order is already created, payment can be retried
-      }
-    }
+      // ... (commenting out the whole block)
+    } 
+    */
 
     res.status(201).json({
       success: true,

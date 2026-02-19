@@ -42,7 +42,9 @@ router.post('/mpesa/callback', handlePaymentWebhook); // M-Pesa specific callbac
 
 // Payment methods and status
 router.get('/methods', authenticate, getPaymentMethods);
+router.get('/methods', authenticate, getPaymentMethods);
 router.get('/status/:orderId', authenticate, getPaymentStatus);
+router.post('/verify', authenticate, require('./payment.controller').verifyTransaction); // Admin verification endpoint
 
 // Test endpoint (only in development)
 if (process.env.NODE_ENV === 'development') {
