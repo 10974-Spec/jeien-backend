@@ -12,7 +12,7 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
         const req = {
             body: {
                 amount: 1,
-                phoneNumber: process.argv[2] || '254700000000', // Use provided arg or dummy
+                phoneNumber: process.argv[2] || '254746917511', // Use provided arg or dummy
                 orderId: new mongoose.Types.ObjectId()
             },
             user: {

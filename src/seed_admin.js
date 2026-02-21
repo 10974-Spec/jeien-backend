@@ -14,8 +14,8 @@ async function seed() {
     console.log('✅ Connected to DB');
 
     // Create or update admin
-    const adminEmail = 'admin@jeien.com';
-    const adminPass = await bcrypt.hash('admin123', 10);
+    const adminEmail = 'caprufru@gmail.com';
+    const adminPass = await bcrypt.hash('jeien@2026MAIN@', 10);
 
     let admin = await User.findOne({ email: adminEmail });
     if (!admin) {
@@ -23,7 +23,7 @@ async function seed() {
             name: 'Main Admin',
             email: adminEmail,
             password: adminPass,
-            phone: '0700000000',
+            phone: '0746917511',
             role: 'admin',
             isVerified: true,
         });
