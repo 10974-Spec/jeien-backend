@@ -1,160 +1,107 @@
-const mongoose = require('mongoose');
-const app = require('./app');
-const config = require('./config/env');
+const express = require('express');
+const dotenv = require('dotenv');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const passport = require('passport');
+const path = require('path');
+const connectDB = require('./config/db');
+const { initSettings } = require('./controllers/settingController');
 
-const PORT = config.PORT || 5000;
+// Load env vars first
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
-console.log('🚀 Starting server...');
-console.log(`📁 Environment: ${config.NODE_ENV}`);
-console.log(`🌐 Frontend URL: ${config.FRONTEND_URL}`);
-console.log(`🔧 Node version: ${process.version}`);
+connectDB().then(() => {
+    initSettings().catch(console.error);
+});
 
-// Graceful shutdown function
-const gracefulShutdown = async (signal) => {
-  console.log(`\n${signal} received, shutting down gracefully...`);
+const app = express();
 
-  try {
-    // Close server first
-    if (server) {
-      await new Promise((resolve) => {
-        server.close(() => {
-          console.log('✅ HTTP server closed.');
-          resolve();
-        });
-      });
-    }
+// Security
+app.use(helmet({ contentSecurityPolicy: false }));
 
-    // Then close MongoDB connection
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.connection.close();
-      console.log('✅ MongoDB connection closed.');
-    }
 
-    console.log('✅ All connections closed. Exiting process.');
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Error during shutdown:', error);
-    process.exit(1);
-  }
-};
+// CORS — allow both local dev origins and any configured env origin
+const allowedOrigins = [
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
+    'http://localhost:3000',
+    ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
+];
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, curl, Postman)
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
-// MongoDB connection with retry logic
-const connectDB = async (retries = 5) => {
-  try {
-    await mongoose.connect(config.MONGODB_URI);
+// Rate Limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 200,
+    message: 'Too many requests from this IP, please try again later.'
+});
+app.use(limiter);
 
-    console.log('✅ Connected to MongoDB');
+// Stricter rate limit for auth routes
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: 'Too many login attempts, please try again later.'
+});
 
-    // Connection events
-    mongoose.connection.on('error', (err) => {
-      console.error('❌ MongoDB connection error:', err.message);
-    });
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(passport.initialize());
 
-    mongoose.connection.on('disconnected', () => {
-      console.warn('⚠️ MongoDB disconnected. Attempting to reconnect...');
-      setTimeout(connectDB, 5000);
-    });
+// Routes
+const authRoutes = require('./routes/authRoutes');
+const productRoutes = require('./routes/productRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const vendorRoutes = require('./routes/vendorRoutes');
+const messageRoutes = require('./routes/messageRoutes');
+const settingRoutes = require('./routes/settingRoutes');
+const bannerRoutes = require('./routes/bannerRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 
-    mongoose.connection.on('reconnected', () => {
-      console.log('✅ MongoDB reconnected');
-    });
 
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error.message);
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/settings', settingRoutes);
+app.use('/api/banners', bannerRoutes);
+app.use('/api/upload', uploadRoutes);
 
-    if (retries > 0) {
-      console.log(`🔄 Retrying connection (${retries} attempts left)...`);
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      return connectDB(retries - 1);
-    } else {
-      console.error('❌ Maximum retries reached. Exiting...');
-      process.exit(1);
-    }
-  }
-};
 
-let server;
+// Health Check
+app.get('/', (req, res) => {
+    res.json({ status: 'ok', message: 'API is running...', timestamp: new Date().toISOString() });
+});
 
-// Start server function
-const startServer = async () => {
-  try {
-    // Connect to database first
-    await connectDB();
+// Global Error Handler
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ message: 'Server Error', error: process.env.NODE_ENV === 'development' ? err.message : undefined });
+});
 
-    // Start the server
-    server = app.listen(PORT, () => {
-      console.log(`✅ Server running on port ${PORT}`);
-      console.log(`🔗 Local: http://localhost:${PORT}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`🔗 CORS Test: http://localhost:${PORT}/api/cors-test`);
-      console.log(`🔗 API: http://localhost:${PORT}/api`);
-
-      if (config.NODE_ENV === 'production') {
-        console.log('📱 Serving React frontend from build directory');
-      } else {
-        console.log('💻 React frontend should run separately on port 5173');
-        console.log('\n⚠️  IMPORTANT CORS FIXES APPLIED:');
-        console.log('   - Added lowercase "x-request-id" to allowed headers');
-        console.log('   - Custom CORS middleware handles preflight properly');
-        console.log('   - Both uppercase and lowercase request IDs supported');
-      }
-    })
-
-    // Start keep-alive cron job (for Render deployment)
-    if (config.NODE_ENV === 'production') {
-      const keepAlive = require('./utils/keepalive.cron');
-      keepAlive.startKeepAlive();
-      console.log('✅ Keep-alive cron job started');
-    }
-
-    // Handle server errors
-    server.on('error', (error) => {
-      if (error.code === 'EADDRINUSE') {
-        console.error(`❌ Port ${PORT} is already in use`);
-        process.exit(1);
-      } else {
-        console.error('❌ Server error:', error);
-      }
-    });
-
-    // Server event handlers
-    server.on('listening', () => {
-      console.log('✅ Server is listening for connections');
-    });
-
-    server.on('close', () => {
-      console.log('⚠️ Server is closing');
-    });
-
-    // Setup shutdown handlers
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-    // Handle uncaught exceptions
-    process.on('uncaughtException', (error) => {
-      console.error('💥 Uncaught Exception:', error);
-      gracefulShutdown('uncaughtException');
-    });
-
-    // Handle unhandled promise rejections
-    process.on('unhandledRejection', (reason, promise) => {
-      console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-      gracefulShutdown('unhandledRejection');
-    });
-
-    // Handle exit signals
-    process.on('exit', (code) => {
-      console.log(`Process exiting with code: ${code}`);
-    });
-
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
-};
-
-// Start the application
-startServer();
-
-// Export for testing
-module.exports = { app, server };
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+});
