@@ -43,7 +43,7 @@ const getMyProducts = async (req, res) => {
 // @route   GET /api/products/:id
 const getProductById = async (req, res) => {
     try {
-        const product = await Product.findById(req.params.id).populate('vendor', 'name storeName');
+        const product = await Product.findById(req.params.id).populate('vendor', 'name storeName storeLogo profileImage followersCount');
         if (product) res.json(product);
         else res.status(404).json({ message: 'Product not found' });
     } catch (e) { res.status(500).json({ message: e.message }); }

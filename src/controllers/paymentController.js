@@ -1,5 +1,6 @@
 const axios = require('axios');
 const getMpesaToken = require('../utils/mpesaToken');
+const sendSMS = require('../utils/sms');
 const Payment = require('../models/Payment');
 const Order = require('../models/Order');
 
@@ -112,7 +113,7 @@ const mpesaCallback = async (req, res) => {
             await payment.save();
 
             // Update Order
-            const order = await Order.findById(payment.order);
+            const order = await Order.findById(payment.order).populate('user', 'name phone');
             if (order) {
                 order.isPaid = true;
                 order.paidAt = Date.now();
@@ -124,6 +125,18 @@ const mpesaCallback = async (req, res) => {
                 };
                 order.status = 'paid';
                 await order.save();
+
+                // Format Phone Number for SMS (ensure starting with +)
+                const rawPhone = payment.phoneNumber?.toString() || order.shippingAddress?.phone || (order.user && order.user.phone);
+                if (rawPhone) {
+                    let smsPhone = rawPhone.toString().trim();
+                    if (smsPhone.startsWith('0')) smsPhone = '+254' + smsPhone.substring(1);
+                    else if (smsPhone.startsWith('254')) smsPhone = '+' + smsPhone;
+                    else if (!smsPhone.startsWith('+')) smsPhone = '+' + smsPhone;
+
+                    const msg = `Dear customer, your Jeien order ${order._id.toString().slice(-8).toUpperCase()} of KSh ${payment.amount} has been paid successfully. We are now processing it. Thank you!`;
+                    await sendSMS(smsPhone, msg);
+                }
             }
 
         } else {
