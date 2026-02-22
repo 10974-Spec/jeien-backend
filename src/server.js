@@ -52,16 +52,15 @@ app.use(passport.initialize());
 // Routes
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const vendorRoutes = require('./routes/vendorRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
-const adminRoutes = require('./routes/adminRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
-const categoryRoutes = require('./routes/categoryRoutes');
-const vendorRoutes = require('./routes/vendorRoutes');
 const messageRoutes = require('./routes/messageRoutes');
-const settingRoutes = require('./routes/settingRoutes');
-const bannerRoutes = require('./routes/bannerRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const bannerRoutes = require('./routes/bannerRoutes');
 
 
 app.use('/api/auth', authLimiter, authRoutes);

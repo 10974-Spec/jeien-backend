@@ -4,7 +4,7 @@ const {
     getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
     createAdminProduct, updateAdminProduct,
-    getAllOrders, getPayments,
+    getAllOrders, getPayments, cancelOrder, updateOrderStatus,
     getStats, getReport,
     getSettings, updateSettings,
 } = require('../controllers/adminController');
@@ -29,6 +29,8 @@ router.put('/products/:id/feature', toggleFeaturedProduct);
 
 // Orders & Payments
 router.get('/orders', getAllOrders);
+router.put('/orders/:id/status', updateOrderStatus);
+router.put('/orders/:id/cancel', cancelOrder);
 router.get('/payments', getPayments);
 
 // Stats & Reports

@@ -1,8 +1,9 @@
 const User = require('../models/User');
-const Product = require('../models/Product');
 const Order = require('../models/Order');
 const Payment = require('../models/Payment');
 const Setting = require('../models/Setting');
+const Message = require('../models/Message');
+const sendSMS = require('../utils/sms');
 
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
@@ -121,6 +122,54 @@ const getPayments = async (req, res) => {
             .populate('user', 'name email phone')
             .sort({ createdAt: -1 });
         res.json(payments);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const cancelOrder = async (req, res) => {
+    try {
+        const { reasonMessage } = req.body;
+        const order = await Order.findById(req.params.id).populate('user', 'name email phone');
+        if (!order) return res.status(404).json({ message: 'Order not found' });
+
+        order.status = 'Cancelled';
+        await order.save();
+
+        if (reasonMessage) {
+            // Create a message in the database for the user's Inbox
+            await Message.create({
+                sender: req.user._id, // Admin
+                recipient: order.user._id,
+                order: order._id,
+                subject: `Order #${order._id.toString().substring(0, 8)} Cancelled`,
+                content: reasonMessage
+            });
+
+            // Send SMS to user
+            if (order.user.phone) {
+                let smsPhone = order.user.phone.toString().trim();
+                // Normalize to +254 format if beginning with 0
+                if (smsPhone.startsWith('0')) smsPhone = '+254' + smsPhone.substring(1);
+                else if (smsPhone.startsWith('254')) smsPhone = '+' + smsPhone;
+                else if (!smsPhone.startsWith('+')) smsPhone = '+' + smsPhone;
+
+                const smsMsg = `Jeien Agencies: Your order #${order._id.toString().substring(0, 8)} has been cancelled. Reason: ${reasonMessage}`;
+                await sendSMS(smsPhone, smsMsg).catch(err => console.error('SMS Send fail on cancel:', err));
+            }
+        }
+
+        res.json(order);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const updateOrderStatus = async (req, res) => {
+    try {
+        const { status } = req.body;
+        const order = await Order.findById(req.params.id);
+        if (!order) return res.status(404).json({ message: 'Order not found' });
+
+        order.status = status;
+        const updated = await order.save();
+        res.json(updated);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
@@ -276,7 +325,7 @@ module.exports = {
     getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
     createAdminProduct, updateAdminProduct,
-    getAllOrders, getPayments,
+    getAllOrders, getPayments, cancelOrder, updateOrderStatus,
     getStats, getReport,
     getSettings, updateSettings,
 };
