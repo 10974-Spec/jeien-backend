@@ -57,6 +57,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const settingRoutes = require('./routes/settingRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
