@@ -1,8 +1,8 @@
 const User = require('../models/User');
-const Order = require('../models/Order');
 const Product = require('../models/Product');
+const Order = require('../models/Order');
 const Payment = require('../models/Payment');
-const SiteSettings = require('../models/SiteSettings');
+const Setting = require('../models/Setting');
 
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
@@ -218,20 +218,26 @@ const updateAdminProduct = async (req, res) => {
 
 const getSettings = async (req, res) => {
     try {
-        let settings = await SiteSettings.findOne({ siteId: 'main' });
-        if (!settings) settings = await SiteSettings.create({ siteId: 'main' });
+        const settings = await Setting.find({});
         res.json(settings);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
 const updateSettings = async (req, res) => {
     try {
-        const settings = await SiteSettings.findOneAndUpdate(
-            { siteId: 'main' },
-            { ...req.body, updatedAt: new Date() },
-            { new: true, upsert: true }
-        );
-        res.json(settings);
+        const updates = req.body;
+        if (Array.isArray(updates)) {
+            for (const update of updates) {
+                await Setting.findOneAndUpdate({ key: update.key }, { value: update.value }, { upsert: true });
+            }
+            res.json({ message: 'Updated' });
+        } else {
+            // Fallback for single object patches (legacy code support)
+            for (const [key, value] of Object.entries(updates)) {
+                await Setting.findOneAndUpdate({ key }, { value }, { upsert: true });
+            }
+            res.json({ message: 'Updated' });
+        }
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 

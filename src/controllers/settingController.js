@@ -207,6 +207,7 @@ const getPublicSettings = async (req, res) => {
 const updateSettingsBulk = async (req, res) => {
     try {
         const updates = req.body; // Array of { key, value }
+        console.log('--- Incoming bulk settings payload: ---', JSON.stringify(updates, null, 2));
 
         for (const update of updates) {
             // Validate type internally or just update
