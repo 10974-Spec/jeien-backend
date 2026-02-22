@@ -103,7 +103,8 @@ echo -e "${yellow}[2/10] Auth Endpoints${reset}"
 # Login as admin
 LOGIN_RESP=$(curl -s -X POST "$BASE/auth/login" \
     -H "Content-Type: application/json" \
-    -d '{"email":"admin@jeien.com","password":"admin123"}' 2>&1)
+    -d '{"email":"caprufru@gmail.com","password":"jeien@2026MAIN@"}' 2>&1)
+
 
 ADMIN_TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('token',''))" 2>/dev/null)
 

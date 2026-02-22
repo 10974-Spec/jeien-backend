@@ -2,12 +2,12 @@ const mongoose = require('mongoose');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-mongoose.connect(process.env.MONGO_URI, {})
+mongoose.connect(process.env.MONGODB_URI || process.env.MONGO_URI, {})
   .then(async () => {
     console.log('Connected to DB');
     try {
-      await mongoose.connection.collection('payments').dropIndex('mpesaReceiptNumber_1');
-      console.log('Dropped index mpesaReceiptNumber_1');
+      await mongoose.connection.collection('products').dropIndex('slug_1');
+      console.log('Dropped index slug_1');
     } catch (e) {
       console.log('Index drop ignored or failed:', e.message);
     }
