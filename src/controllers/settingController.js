@@ -1,4 +1,6 @@
 const Setting = require('../models/Setting');
+const Product = require('../models/Product');
+const User = require('../models/User');
 
 // Helper to init default settings if not exists
 const initSettings = async () => {
@@ -219,9 +221,27 @@ const updateSettingsBulk = async (req, res) => {
     }
 };
 
+// @desc    Get public statistics
+// @route   GET /api/settings/public-stats
+const getPublicStats = async (req, res) => {
+    try {
+        const productsCount = await Product.countDocuments({ isApproved: true, isActive: true });
+        const vendorsCount = await User.countDocuments({ role: 'vendor', vendorStatus: 'approved' });
+
+        res.json({
+            products: productsCount,
+            vendors: vendorsCount,
+            satisfaction: 99 // Hardcoded satisfaction metric unless specified otherwise
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     initSettings,
     getAllSettings,
     getPublicSettings,
-    updateSettingsBulk
+    updateSettingsBulk,
+    getPublicStats
 };

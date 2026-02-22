@@ -207,6 +207,43 @@ const getStats = async (req, res) => {
             { $sort: { '_id.year': 1, '_id.month': 1 } }
         ]);
 
+        // Top Categories based on actual sales
+        const topCategoriesAgg = await Order.aggregate([
+            { $match: { isPaid: true } },
+            { $unwind: '$orderItems' },
+            {
+                $lookup: {
+                    from: 'products',
+                    localField: 'orderItems.product',
+                    foreignField: '_id',
+                    as: 'productInfo'
+                }
+            },
+            { $unwind: '$productInfo' },
+            {
+                $group: {
+                    _id: '$productInfo.category',
+                    sales: { $sum: { $multiply: ['$orderItems.price', '$orderItems.qty'] } }
+                }
+            },
+            { $sort: { sales: -1 } },
+            { $limit: 4 },
+            {
+                $project: {
+                    _id: 0,
+                    name: '$_id',
+                    sales: 1
+                }
+            }
+        ]);
+
+        // Assign colors dynamically for the frontend
+        const colors = ['#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#10b981', '#ec4899'];
+        const topCategories = topCategoriesAgg.map((cat, index) => ({
+            ...cat,
+            color: colors[index % colors.length]
+        }));
+
         res.json({
             salesAmount,
             commission: salesAmount * 0.07,
@@ -216,7 +253,8 @@ const getStats = async (req, res) => {
             ordersCount,
             productsCount,
             pendingProducts,
-            monthlyRevenue
+            monthlyRevenue,
+            topCategories
         });
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
