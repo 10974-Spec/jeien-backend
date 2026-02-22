@@ -61,7 +61,7 @@ const orderSchema = new mongoose.Schema({
     // Overall order status (can be derived derived from items, but good for high level)
     status: {
         type: String,
-        enum: ['pending', 'paid', 'processing', 'completed', 'cancelled'],
+        enum: ['pending', 'paid', 'processing', 'shipped', 'delivered', 'completed', 'cancelled', 'refunded'],
         default: 'pending',
     },
     createdAt: {
