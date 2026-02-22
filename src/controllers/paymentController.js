@@ -67,6 +67,37 @@ const initiateStkPush = async (req, res) => {
             status: 'pending'
         });
 
+        // Developer Mode webock bypass to trigger SMS automatically locally
+        if (process.env.NODE_ENV !== 'production' && req.hostname && (req.hostname.includes('localhost') || req.hostname.includes('127.0.0.1'))) {
+            setTimeout(async () => {
+                try {
+                    console.log('--- SIMULATING MPESA CALLBACK LOCALLY ---');
+                    const mockReq = {
+                        body: {
+                            Body: {
+                                stkCallback: {
+                                    MerchantRequestID: response.data.MerchantRequestID,
+                                    CheckoutRequestID: response.data.CheckoutRequestID,
+                                    ResultCode: 0,
+                                    ResultDesc: 'The service request is processed successfully.',
+                                    CallbackMetadata: {
+                                        Item: [
+                                            { Name: 'Amount', Value: amount },
+                                            { Name: 'MpesaReceiptNumber', Value: 'MOCK' + Math.floor(Math.random() * 1000000) },
+                                            { Name: 'PhoneNumber', Value: phoneNumber }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    const mockRes = { status: () => ({ send: () => { }, json: () => { } }), send: () => { }, json: () => { } };
+                    await module.exports.mpesaCallback(mockReq, mockRes);
+                    console.log('--- LOCAL SMS & PAYMENT SIMULATION FIRED ---');
+                } catch (e) { console.error('Mock callback failed', e); }
+            }, 6000); // Wait 6s then fire
+        }
+
         res.json(response.data);
     } catch (error) {
         console.error('STK Push Error:', error.response?.data || error.message);
