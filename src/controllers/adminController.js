@@ -3,6 +3,7 @@ const Order = require('../models/Order');
 const Payment = require('../models/Payment');
 const Setting = require('../models/Setting');
 const Message = require('../models/Message');
+const Product = require('../models/Product');
 const sendSMS = require('../utils/sms');
 
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
