@@ -20,6 +20,37 @@ const deleteUser = async (req, res) => {
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
+const createAdminUser = async (req, res) => {
+    try {
+        const { name, email, password, role, phone, storeName } = req.body;
+        const userExists = await User.findOne({ email });
+        if (userExists) return res.status(400).json({ message: 'User already exists' });
+
+        const bcrypt = require('bcryptjs');
+        const hashedPassword = await bcrypt.hash(password || 'password123', 10);
+
+        const user = await User.create({
+            name, email,
+            password: hashedPassword,
+            role: role || 'user',
+            phone,
+            storeName: role === 'vendor' ? storeName : undefined,
+            vendorStatus: role === 'vendor' ? 'approved' : 'pending' // Auto approve admin-created vendors
+        });
+        res.status(201).json(user);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const deleteUsersBulk = async (req, res) => {
+    try {
+        const { userIds } = req.body;
+        if (!userIds || !userIds.length) return res.status(400).json({ message: 'No users selected' });
+
+        await User.deleteMany({ _id: { $in: userIds }, role: { $ne: 'admin' } }); // prevent admin deletion
+        res.json({ message: 'Users bulk deleted' });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
 const updateVendorStatus = async (req, res) => {
     try {
         const user = await User.findById(req.params.id);
@@ -242,7 +273,7 @@ const updateSettings = async (req, res) => {
 };
 
 module.exports = {
-    getUsers, deleteUser, updateVendorStatus,
+    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
     createAdminProduct, updateAdminProduct,
     getAllOrders, getPayments,

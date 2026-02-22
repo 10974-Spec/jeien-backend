@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
-    getUsers, deleteUser, updateVendorStatus,
+    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
     createAdminProduct, updateAdminProduct,
     getAllOrders, getPayments,
@@ -14,6 +14,8 @@ router.use(protect, admin);
 
 // Users
 router.get('/users', getUsers);
+router.post('/users', createAdminUser);
+router.delete('/users/bulk', deleteUsersBulk);
 router.delete('/users/:id', deleteUser);
 router.put('/vendor/:id/verify', updateVendorStatus);
 
