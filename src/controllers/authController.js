@@ -5,6 +5,8 @@ const generateToken = require('../utils/generateToken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
+const ActionLog = require('../models/ActionLog');
+
 // helper to fire-and-forget a notification
 const notify = (type, title, message, data = {}) =>
     Notification.create({ type, title, message, data, forAdmin: true }).catch(() => { });
@@ -75,19 +77,27 @@ const registerUser = async (req, res) => {
 const loginUser = async (req, res) => {
     try {
         const { email, password, phone } = req.body;
+        const ipAddress = req.ip || req.connection.remoteAddress || '0.0.0.0';
+        const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
         let user;
 
         if (phone) {
             user = await User.findOne({ phone, role: 'user' });
-            if (!user) return res.status(401).json({ message: 'Invalid phone number' });
+            if (!user) {
+                await ActionLog.create({ emailAttempted: phone, action: 'login_failed', status: 'failed', ipAddress, deviceInfo, failureReason: 'Invalid phone number' }).catch(() => { });
+                return res.status(401).json({ message: 'Invalid phone number' });
+            }
         } else if (email && password) {
             user = await User.findOne({ email });
             if (!user || !(await bcrypt.compare(password, user.password))) {
+                await ActionLog.create({ emailAttempted: email, action: 'login_failed', status: 'failed', ipAddress, deviceInfo, failureReason: 'Invalid credentials' }).catch(() => { });
                 return res.status(401).json({ message: 'Invalid email or password' });
             }
         } else {
             return res.status(400).json({ message: 'Please provide phone number or email and password' });
         }
+
+        await ActionLog.create({ user: user._id, emailAttempted: user.email || user.phone, action: 'login_success', status: 'success', ipAddress, deviceInfo }).catch(() => { });
 
         res.json({
             _id: user._id, name: user.name, email: user.email, role: user.role,

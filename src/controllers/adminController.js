@@ -264,6 +264,7 @@ const getStats = async (req, res) => {
 const getReport = async (req, res) => {
     try {
         const { type } = req.params;
+        const { download } = req.query;
         let data = [], fields = [];
 
         if (type === 'sales') {
@@ -273,17 +274,30 @@ const getReport = async (req, res) => {
                 orderId: o._id, customer: o.user?.name, email: o.user?.email,
                 amount: o.totalPrice, status: o.status, paidAt: o.paidAt
             }));
+            fields = ['orderId', 'customer', 'email', 'amount', 'status', 'paidAt'];
         } else if (type === 'users') {
             const users = await User.find({}).select('-password');
             data = users.map(u => ({ id: u._id, name: u.name, email: u.email, role: u.role, createdAt: u.createdAt }));
+            fields = ['id', 'name', 'email', 'role', 'createdAt'];
         } else if (type === 'vendors') {
             const vendors = await User.find({ role: 'vendor' }).select('-password');
             data = vendors.map(v => ({ id: v._id, name: v.name, store: v.storeName, status: v.vendorStatus, createdAt: v.createdAt }));
+            fields = ['id', 'name', 'store', 'status', 'createdAt'];
         } else if (type === 'products') {
             const products = await Product.find({}).populate('vendor', 'name storeName');
             data = products.map(p => ({ id: p._id, name: p.name, vendor: p.vendor?.storeName, price: p.price, stock: p.stock, approved: p.isApproved }));
+            fields = ['id', 'name', 'vendor', 'price', 'stock', 'approved'];
         } else {
             return res.status(400).json({ message: 'Unknown report type' });
+        }
+
+        if (download === '1') {
+            const { Parser } = require('json2csv');
+            const json2csvParser = new Parser({ fields });
+            const csv = json2csvParser.parse(data);
+            res.header('Content-Type', 'text/csv');
+            res.attachment(`${type}-report-${new Date().toISOString().split('T')[0]}.csv`);
+            return res.send(csv);
         }
 
         res.json(data);
@@ -437,11 +451,81 @@ const broadcastMessage = async (req, res) => {
     }
 };
 
+const getMessages = async (req, res) => {
+    try {
+        const Message = require('../models/Message');
+        const messages = await Message.find()
+            .populate('sender', 'name role')
+            .populate('recipient', 'name role')
+            .sort({ createdAt: -1 })
+            .limit(100);
+
+        res.json(messages);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const getSecurityLogs = async (req, res) => {
+    try {
+        const logs = await require('../models/ActionLog').find({})
+            .populate('user', 'name role')
+            .sort({ createdAt: -1 })
+            .limit(100);
+        res.json(logs);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const getReviews = async (req, res) => {
+    try {
+        const Review = require('../models/Review');
+        const reviews = await Review.find({})
+            .populate('user', 'name email')
+            .populate({ path: 'product', select: 'name', populate: { path: 'vendor', select: 'storeName' } })
+            .sort({ createdAt: -1 });
+
+        // Map to format expected by AdminReviewsTab
+        const formatted = reviews.map(r => ({
+            id: r._id,
+            product: r.product?.name || 'Unknown Product',
+            vendor: r.product?.vendor?.storeName || 'Unknown Vendor',
+            reviewer: r.user?.name || 'Anon User',
+            rating: r.rating,
+            text: r.comment,
+            date: new Date(r.createdAt).toISOString().split('T')[0],
+            status: r.status,
+            flags: r.flags || 0
+        }));
+
+        res.json(formatted);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const updateReviewStatus = async (req, res) => {
+    try {
+        const Review = require('../models/Review');
+        const review = await Review.findById(req.params.id);
+        if (!review) return res.status(404).json({ message: 'Review not found' });
+
+        if (req.body.status) review.status = req.body.status;
+        await review.save();
+        res.json({ message: 'Review status updated' });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const deleteReview = async (req, res) => {
+    try {
+        const Review = require('../models/Review');
+        await Review.findByIdAndDelete(req.params.id);
+        res.json({ message: 'Review deleted' });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
 module.exports = {
-    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser, updateUser, broadcastMessage,
+    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser, updateUser, broadcastMessage, getMessages,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
     createAdminProduct, updateAdminProduct,
     getAllOrders, getPayments, cancelOrder, updateOrderStatus,
     getStats, getReport,
     getSettings, updateSettings,
+    getSecurityLogs,
+    getReviews, updateReviewStatus, deleteReview
 };
