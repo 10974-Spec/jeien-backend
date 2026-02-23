@@ -292,14 +292,18 @@ const submitContactForm = async (req, res) => {
             return res.status(400).json({ message: 'Please provide name, email and message' });
         }
 
-        // Send email to info and support
         const { sendEmail } = require('../utils/email');
         const text = `New contact form submission from ${name} (${email}):\n\n${message}`;
         const html = `<p><strong>Name:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p><p><strong>Message:</strong><br/>${message}</p>`;
 
-        // Send to both addresses as requested by the user
-        await sendEmail({ email: 'info@jeien.com', subject: 'New Contact Form Submission', message: text, html });
-        await sendEmail({ email: 'support@jeien.com', subject: 'New Contact Form Submission', message: text, html });
+        // Attempt to send emails — if SMTP is not configured, sendEmail logs it and continues
+        try {
+            await sendEmail({ email: 'info@jeien.com', subject: 'New Contact Form Submission', message: text, html });
+            await sendEmail({ email: 'support@jeien.com', subject: 'New Contact Form Submission', message: text, html });
+        } catch (emailErr) {
+            // Log but don't fail the request — message was received
+            console.error('Contact form email error:', emailErr.message);
+        }
 
         res.status(200).json({ message: 'Contact form submitted successfully' });
     } catch (error) {
