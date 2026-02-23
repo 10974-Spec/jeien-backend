@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
-    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser,
+    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser, updateUser, broadcastMessage,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
     createAdminProduct, updateAdminProduct,
     getAllOrders, getPayments, cancelOrder, updateOrderStatus,
@@ -17,7 +17,9 @@ router.get('/users', getUsers);
 router.post('/users', createAdminUser);
 router.delete('/users/bulk', deleteUsersBulk);
 router.delete('/users/:id', deleteUser);
+router.put('/users/:id', updateUser);
 router.put('/vendor/:id/verify', updateVendorStatus);
+router.post('/broadcast', broadcastMessage);
 
 // Products — admin CRUD
 router.get('/products', getAllProducts);

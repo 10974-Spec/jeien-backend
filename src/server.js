@@ -62,6 +62,7 @@ const messageRoutes = require('./routes/messageRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const bannerRoutes = require('./routes/bannerRoutes');
+const disputeRoutes = require('./routes/disputeRoutes');
 
 
 app.use('/api/auth', authLimiter, authRoutes);
@@ -76,6 +77,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/settings', settingRoutes);
 app.use('/api/banners', bannerRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/disputes', disputeRoutes);
 
 
 // Health Check
@@ -90,6 +92,6 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
 });

@@ -360,8 +360,85 @@ const updateSettings = async (req, res) => {
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
+const updateUser = async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        user.name = req.body.name || user.name;
+        user.email = req.body.email || user.email;
+        if (req.body.phone) user.phone = req.body.phone;
+        if (req.body.role && req.user.role === 'admin') user.role = req.body.role; // Only admin changes roles
+        if (req.body.vendorStatus) user.vendorStatus = req.body.vendorStatus;
+        if (req.body.storeName) user.storeName = req.body.storeName;
+
+        const updated = await user.save();
+        res.json({
+            _id: updated._id,
+            name: updated.name,
+            email: updated.email,
+            role: updated.role,
+            phone: updated.phone,
+            vendorStatus: updated.vendorStatus,
+            storeName: updated.storeName
+        });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const broadcastMessage = async (req, res) => {
+    try {
+        const { targetGroup, messageType, subject, message } = req.body;
+
+        if (!message) return res.status(400).json({ message: 'Message content is required' });
+
+        let query = {};
+        if (targetGroup === 'vendors') query.role = 'vendor';
+        else if (targetGroup === 'buyers') query.role = 'user';
+        // If 'all', empty query matches all
+
+        const users = await User.find(query).select('_id email phone');
+
+        // Note: For a real production app with 1M+ users, you'd use a queue (BullMQ/RabbitMQ).
+        // For this scale, a Promise.all or for-loop works fine.
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const user of users) {
+            try {
+                // 1. Always save as an internal DB message
+                await Message.create({
+                    sender: req.user._id,
+                    recipient: user._id,
+                    subject: subject || 'Admin Broadcast',
+                    content: message
+                });
+
+                // 2. If SMS requested and user has phone
+                if (messageType === 'sms' && user.phone) {
+                    let smsPhone = user.phone.toString().trim();
+                    if (smsPhone.startsWith('0')) smsPhone = '+254' + smsPhone.substring(1);
+                    else if (smsPhone.startsWith('254')) smsPhone = '+' + smsPhone;
+                    else if (!smsPhone.startsWith('+')) smsPhone = '+' + smsPhone;
+
+                    await sendSMS(smsPhone, message);
+                }
+                // (Email implementation omitted/mocked as typical internal message)
+                successCount++;
+            } catch (err) {
+                failCount++;
+                console.error('Broadcast err:', err.message);
+            }
+        }
+
+        res.json({ message: 'Broadcast complete', successCount, failCount, total: users.length });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+};
+
 module.exports = {
-    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser,
+    getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser, updateUser, broadcastMessage,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
     createAdminProduct, updateAdminProduct,
     getAllOrders, getPayments, cancelOrder, updateOrderStatus,

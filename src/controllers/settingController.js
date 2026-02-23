@@ -213,7 +213,11 @@ const updateSettingsBulk = async (req, res) => {
 
         for (const update of updates) {
             // Validate type internally or just update
-            await Setting.findOneAndUpdate({ key: update.key }, { value: update.value });
+            await Setting.findOneAndUpdate(
+                { key: update.key },
+                { value: update.value },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
         }
         res.json({ message: 'Settings updated successfully' });
     } catch (error) {
@@ -238,10 +242,53 @@ const getPublicStats = async (req, res) => {
     }
 };
 
+// @desc    Get all coupons
+// @route   GET /api/settings/coupons
+const getCoupons = async (req, res) => {
+    try {
+        const coupons = await Setting.find({ key: { $regex: '^coupon_' } });
+        // Return parsed values. We stored them as JSON strings in `value`
+        const parsed = coupons.map(c => {
+            try { return JSON.parse(c.value); } catch { return null; }
+        }).filter(Boolean);
+        res.json(parsed);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Create or update a coupon
+// @route   POST /api/settings/coupons
+const createCoupon = async (req, res) => {
+    try {
+        const { code, discountType, discountValue, minOrder, maxUses, expiresAt, isActive } = req.body;
+        if (!code || discountValue === undefined) return res.status(400).json({ message: 'Code and discount value required' });
+
+        const key = `coupon_${code.toUpperCase()}`;
+        const couponData = {
+            code: code.toUpperCase(),
+            discountType, discountValue, minOrder, maxUses, expiresAt, isActive,
+            createdAt: new Date().toISOString()
+        };
+
+        const updated = await Setting.findOneAndUpdate(
+            { key },
+            { value: JSON.stringify(couponData), type: 'json', category: 'Coupons' },
+            { upsert: true, new: true }
+        );
+
+        res.status(201).json(couponData);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     initSettings,
     getAllSettings,
     getPublicSettings,
     updateSettingsBulk,
-    getPublicStats
+    getPublicStats,
+    getCoupons,
+    createCoupon
 };
