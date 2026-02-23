@@ -8,7 +8,8 @@ const {
     getStats, getReport,
     getSettings, updateSettings,
     getSecurityLogs,
-    getReviews, updateReviewStatus, deleteReview
+    getReviews, updateReviewStatus, deleteReview,
+    getShippingZones, createShippingZone, updateShippingZone, deleteShippingZone
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/authMiddleware');
 
@@ -53,5 +54,14 @@ router.get('/security/logs', getSecurityLogs);
 router.get('/reviews', getReviews);
 router.put('/reviews/:id/status', updateReviewStatus);
 router.delete('/reviews/:id', deleteReview);
+
+// Shipping Zones
+router.route('/shipping-zones')
+    .get(getShippingZones)
+    .post(createShippingZone);
+
+router.route('/shipping-zones/:id')
+    .put(updateShippingZone)
+    .delete(deleteShippingZone);
 
 module.exports = router;

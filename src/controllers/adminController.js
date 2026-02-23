@@ -519,6 +519,38 @@ const deleteReview = async (req, res) => {
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
+// ─── SHIPPING ZONES ────────────────────────────────────────────────────────
+const ShippingZone = require('../models/ShippingZone');
+
+const getShippingZones = async (req, res) => {
+    try {
+        const zones = await ShippingZone.find({});
+        res.json(zones);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const createShippingZone = async (req, res) => {
+    try {
+        const zone = await ShippingZone.create(req.body);
+        res.status(201).json(zone);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const updateShippingZone = async (req, res) => {
+    try {
+        const zone = await ShippingZone.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        if (!zone) return res.status(404).json({ message: 'Zone not found' });
+        res.json(zone);
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+const deleteShippingZone = async (req, res) => {
+    try {
+        await ShippingZone.findByIdAndDelete(req.params.id);
+        res.json({ message: 'Zone deleted' });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
 module.exports = {
     getUsers, deleteUser, deleteUsersBulk, updateVendorStatus, createAdminUser, updateUser, broadcastMessage, getMessages,
     getAllProducts, approveProduct, deleteAnyProduct, toggleFeaturedProduct,
@@ -527,5 +559,6 @@ module.exports = {
     getStats, getReport,
     getSettings, updateSettings,
     getSecurityLogs,
-    getReviews, updateReviewStatus, deleteReview
+    getReviews, updateReviewStatus, deleteReview,
+    getShippingZones, createShippingZone, updateShippingZone, deleteShippingZone
 };

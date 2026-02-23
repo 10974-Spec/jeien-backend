@@ -283,6 +283,31 @@ const createCoupon = async (req, res) => {
     }
 };
 
+// @desc    Submit contact form
+// @route   POST /api/settings/contact
+const submitContactForm = async (req, res) => {
+    try {
+        const { name, email, message } = req.body;
+        if (!name || !email || !message) {
+            return res.status(400).json({ message: 'Please provide name, email and message' });
+        }
+
+        // Send email to info and support
+        const { sendEmail } = require('../utils/email');
+        const text = `New contact form submission from ${name} (${email}):\n\n${message}`;
+        const html = `<p><strong>Name:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p><p><strong>Message:</strong><br/>${message}</p>`;
+
+        // Send to both addresses as requested by the user
+        await sendEmail({ email: 'info@jeien.com', subject: 'New Contact Form Submission', message: text, html });
+        await sendEmail({ email: 'support@jeien.com', subject: 'New Contact Form Submission', message: text, html });
+
+        res.status(200).json({ message: 'Contact form submitted successfully' });
+    } catch (error) {
+        console.error('Contact form error:', error);
+        res.status(500).json({ message: 'Failed to send message' });
+    }
+};
+
 module.exports = {
     initSettings,
     getAllSettings,
@@ -290,5 +315,6 @@ module.exports = {
     updateSettingsBulk,
     getPublicStats,
     getCoupons,
-    createCoupon
+    createCoupon,
+    submitContactForm
 };
