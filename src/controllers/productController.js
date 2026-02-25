@@ -4,8 +4,23 @@ const Product = require('../models/Product');
 // @route   GET /api/products
 const getProducts = async (req, res) => {
     try {
-        const keyword = req.query.keyword ? { name: { $regex: req.query.keyword, $options: 'i' } } : {};
-        const filter = { ...keyword, isApproved: true, isActive: true };
+        const filter = { isApproved: true, isActive: true };
+
+        // Handle global search query (q or keyword)
+        const searchRaw = req.query.q || req.query.keyword;
+        if (searchRaw) {
+            filter.$or = [
+                { name: { $regex: searchRaw, $options: 'i' } },
+                { description: { $regex: searchRaw, $options: 'i' } },
+                { tags: { $regex: searchRaw, $options: 'i' } },
+                { category: { $regex: searchRaw, $options: 'i' } }
+            ];
+        }
+
+        // Handle exact category filter if clicked from sidebar/grid
+        if (req.query.category) {
+            filter.category = req.query.category;
+        }
 
         if (req.query.salesType) {
             // If filtering by wholesale, also include products that do 'both'
