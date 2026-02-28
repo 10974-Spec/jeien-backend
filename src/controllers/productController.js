@@ -31,7 +31,7 @@ const getProducts = async (req, res) => {
             }
         }
 
-        const pageSize = 12;
+        const pageSize = req.query.limit ? Number(req.query.limit) : 1000;
         const page = Number(req.query.pageNumber) || 1;
         const count = await Product.countDocuments(filter);
         const products = await Product.find(filter)
