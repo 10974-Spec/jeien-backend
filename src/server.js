@@ -7,6 +7,7 @@ const passport = require('passport');
 const path = require('path');
 const connectDB = require('./config/db');
 const { initSettings } = require('./controllers/settingController');
+const { startKeepAlive } = require('./utils/keepAlive');
 
 // Load env vars first
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -94,4 +95,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+    startKeepAlive();
 });
