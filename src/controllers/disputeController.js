@@ -1,5 +1,6 @@
 const Dispute = require('../models/Dispute');
 const Order = require('../models/Order');
+const { pool } = require('../config/db');
 
 // @desc    Create a new dispute
 // @route   POST /api/disputes
@@ -11,19 +12,26 @@ const createDispute = async (req, res) => {
         const order = await Order.findById(orderId);
         if (!order) return res.status(404).json({ message: 'Order not found' });
 
-        // Ensure user owns the order or is the vendor
-        // For simplicity, we just attach the user creating it
-        const dispute = new Dispute({
+        const vendorId = order.orderItems[0]?.vendor || null;
+
+        const dispute = await Dispute.create({
             order: orderId,
             user: req.user._id,
-            vendor: order.orderItems[0]?.vendor || null,
+            vendor: vendorId,
             reason,
             description,
             evidence: evidence || [],
-            messages: [{ sender: req.user._id, message: description }]
         });
 
-        const created = await dispute.save();
+        // Add initial message
+        if (description) {
+            await pool.query(
+                'INSERT INTO dispute_messages (dispute_id, sender_id, message) VALUES ($1,$2,$3)',
+                [dispute._id, req.user._id, description]
+            );
+        }
+
+        const created = await Dispute.findById(dispute._id);
         res.status(201).json(created);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -35,9 +43,17 @@ const createDispute = async (req, res) => {
 // @access  Private
 const getMyDisputes = async (req, res) => {
     try {
-        const disputes = await Dispute.find({
-            $or: [{ user: req.user._id }, { vendor: req.user._id }]
-        }).populate('order').populate('user', 'name email');
+        const { rows } = await pool.query(
+            `SELECT * FROM disputes WHERE user_id = $1 OR vendor_id = $1 ORDER BY created_at DESC`,
+            [req.user._id]
+        );
+        const disputes = rows.map(r => ({
+            _id: r.id, id: r.id,
+            order: r.order_id, user: r.user_id, vendor: r.vendor_id,
+            reason: r.reason, description: r.description, status: r.status,
+            resolution: r.resolution, evidence: r.evidence || [],
+            createdAt: r.created_at, updatedAt: r.updated_at,
+        }));
         res.json(disputes);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -49,11 +65,7 @@ const getMyDisputes = async (req, res) => {
 // @access  Private/Admin
 const getAllDisputes = async (req, res) => {
     try {
-        const disputes = await Dispute.find({})
-            .populate('order')
-            .populate('user', 'name email')
-            .populate('vendor', 'name email')
-            .sort({ createdAt: -1 });
+        const disputes = await Dispute.find({});
         res.json(disputes);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -67,13 +79,11 @@ const updateDispute = async (req, res) => {
     try {
         const { status, resolution } = req.body;
         const dispute = await Dispute.findById(req.params.id);
-
         if (!dispute) return res.status(404).json({ message: 'Dispute not found' });
 
         dispute.status = status || dispute.status;
         if (resolution) dispute.resolution = resolution;
-
-        const updated = await dispute.save();
+        const updated = await Dispute.save(dispute);
         res.json(updated);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -87,19 +97,14 @@ const addDisputeMessage = async (req, res) => {
     try {
         const { message } = req.body;
         const dispute = await Dispute.findById(req.params.id);
-
         if (!dispute) return res.status(404).json({ message: 'Dispute not found' });
 
-        dispute.messages.push({
-            sender: req.user._id,
-            message
-        });
+        await pool.query(
+            'INSERT INTO dispute_messages (dispute_id, sender_id, message) VALUES ($1,$2,$3)',
+            [dispute._id, req.user._id, message]
+        );
 
-        const updated = await dispute.save();
-
-        // Deep populate to get sender names for the UI, though not strictly required
-        await updated.populate('messages.sender', 'name role');
-
+        const updated = await Dispute.findById(dispute._id);
         res.status(201).json(updated);
     } catch (error) {
         res.status(500).json({ message: error.message });

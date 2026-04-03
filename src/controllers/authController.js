@@ -4,7 +4,6 @@ const Notification = require('../models/Notification');
 const generateToken = require('../utils/generateToken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-
 const ActionLog = require('../models/ActionLog');
 
 // helper to fire-and-forget a notification
@@ -44,9 +43,9 @@ const registerUser = async (req, res) => {
         }
 
         const user = await User.create({
-            name, email: email || undefined, password: hashedPassword, phone,
+            name, email: email || null, password: hashedPassword, phone,
             role: userRole, storeName, idNumber, storeDescription,
-            vendorStatus: userRole === 'vendor' ? initialVendorStatus : undefined
+            vendorStatus: userRole === 'vendor' ? initialVendorStatus : 'pending'
         });
 
         if (user) {
@@ -54,7 +53,7 @@ const registerUser = async (req, res) => {
             notify(
                 isVendor ? 'new_vendor' : 'new_user',
                 isVendor ? `New Vendor: ${name}` : `New User: ${name}`,
-                `${email} just registered as a ${user.role}.`,
+                `${email || phone} just registered as a ${user.role}.`,
                 { userId: user._id }
             );
 
@@ -144,7 +143,7 @@ const updateProfile = async (req, res) => {
         if (storeDescription !== undefined) user.storeDescription = storeDescription;
         if (profileImage !== undefined) user.profileImage = profileImage;
 
-        const saved = await user.save();
+        const saved = await User.save(user);
         res.json({
             _id: saved._id, name: saved.name, email: saved.email, role: saved.role,
             phone: saved.phone, storeName: saved.storeName, storeDescription: saved.storeDescription,
@@ -166,9 +165,9 @@ const forgotPassword = async (req, res) => {
 
         const resetToken = crypto.randomBytes(32).toString('hex');
         user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-        user.passwordResetExpires = Date.now() + 60 * 60 * 1000; // 1 hour
+        user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
         user.passwordResetReason = reason || '';
-        await user.save({ validateBeforeSave: false });
+        await User.save(user);
 
         if (user.role === 'vendor') {
             notify(
@@ -207,10 +206,10 @@ const resetPassword = async (req, res) => {
         const { password } = req.body;
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(password, salt);
-        user.passwordResetToken = undefined;
-        user.passwordResetExpires = undefined;
-        user.passwordResetReason = undefined;
-        await user.save();
+        user.passwordResetToken = null;
+        user.passwordResetExpires = null;
+        user.passwordResetReason = null;
+        await User.save(user);
 
         res.json({ message: 'Password reset successful. You can now log in.' });
     } catch (err) {

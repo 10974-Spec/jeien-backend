@@ -14,8 +14,8 @@ const sendMessage = async (req, res) => {
 
         const message = await Message.create({
             sender: senderId,
-            receiver: receiverId,
-            subject,
+            recipient: receiverId,
+            subject: subject || '(no subject)',
             content
         });
 
@@ -30,10 +30,7 @@ const sendMessage = async (req, res) => {
 // @access  Private
 const getMyMessages = async (req, res) => {
     try {
-        const messages = await Message.find({ receiver: req.user._id })
-            .populate('sender', 'name email profileImage')
-            .sort({ createdAt: -1 });
-
+        const messages = await Message.find({ recipient_id: req.user._id });
         res.status(200).json(messages);
     } catch (error) {
         res.status(500).json({ message: error.message });

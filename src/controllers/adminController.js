@@ -10,8 +10,9 @@ const sendSMS = require('../utils/sms');
 
 const getUsers = async (req, res) => {
     try {
-        const users = await User.find({}).select('-password');
-        res.json(users);
+        const users = await User.find({});
+        // Strip password
+        res.json(users.map(u => { const { password, ...rest } = u; return rest; }));
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
@@ -37,7 +38,7 @@ const createAdminUser = async (req, res) => {
             role: role || 'user',
             phone,
             storeName: role === 'vendor' ? storeName : undefined,
-            vendorStatus: role === 'vendor' ? 'approved' : 'pending' // Auto approve admin-created vendors
+            vendorStatus: role === 'vendor' ? 'approved' : 'pending'
         });
         res.status(201).json(user);
     } catch (e) { res.status(500).json({ message: e.message }); }
@@ -47,8 +48,7 @@ const deleteUsersBulk = async (req, res) => {
     try {
         const { userIds } = req.body;
         if (!userIds || !userIds.length) return res.status(400).json({ message: 'No users selected' });
-
-        await User.deleteMany({ _id: { $in: userIds }, role: { $ne: 'admin' } }); // prevent admin deletion
+        await User.deleteMany({ _id: { $in: userIds }, role: { $ne: 'admin' } });
         res.json({ message: 'Users bulk deleted' });
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -59,7 +59,7 @@ const updateVendorStatus = async (req, res) => {
         if (!user || user.role !== 'vendor') return res.status(404).json({ message: 'Vendor not found' });
         user.vendorStatus = req.body.status || 'approved';
         user.isVerified = user.vendorStatus === 'approved';
-        const updated = await user.save();
+        const updated = await User.save(user);
         res.json(updated);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -68,7 +68,7 @@ const updateVendorStatus = async (req, res) => {
 
 const getAllProducts = async (req, res) => {
     try {
-        const products = await Product.find({}).populate('vendor', 'name storeName email');
+        const products = await Product.find({});
         res.json(products);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -79,7 +79,7 @@ const approveProduct = async (req, res) => {
         if (!product) return res.status(404).json({ message: 'Product not found' });
         product.isApproved = req.body.isApproved !== undefined ? req.body.isApproved : true;
         product.isActive = product.isApproved;
-        const updated = await product.save();
+        const updated = await Product.save(product);
         res.json(updated);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -96,7 +96,7 @@ const toggleFeaturedProduct = async (req, res) => {
         const product = await Product.findById(req.params.id);
         if (!product) return res.status(404).json({ message: 'Not found' });
         product.isFeatured = !product.isFeatured;
-        const updated = await product.save();
+        const updated = await Product.save(product);
         res.json(updated);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -105,11 +105,7 @@ const toggleFeaturedProduct = async (req, res) => {
 
 const getAllOrders = async (req, res) => {
     try {
-        const orders = await Order.find({})
-            .populate('user', 'name email phone')
-            .populate('orderItems.product', 'name images')
-            .populate('orderItems.vendor', 'name storeName')
-            .sort({ createdAt: -1 });
+        const orders = await Order.find({});
         res.json(orders);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -118,10 +114,7 @@ const getAllOrders = async (req, res) => {
 
 const getPayments = async (req, res) => {
     try {
-        const payments = await Payment.find({})
-            .populate('order', 'totalPrice status createdAt')
-            .populate('user', 'name email phone')
-            .sort({ createdAt: -1 });
+        const payments = await Payment.find({});
         res.json(payments);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -129,30 +122,28 @@ const getPayments = async (req, res) => {
 const cancelOrder = async (req, res) => {
     try {
         const { reasonMessage } = req.body;
-        const order = await Order.findById(req.params.id).populate('user', 'name email phone');
+        const order = await Order.findById(req.params.id);
         if (!order) return res.status(404).json({ message: 'Order not found' });
 
         order.status = 'Cancelled';
-        await order.save();
+        await Order.save(order);
 
         if (reasonMessage) {
-            // Create a message in the database for the user's Inbox
+            const userId = order.user?._id || order.user;
             await Message.create({
-                sender: req.user._id, // Admin
-                recipient: order.user._id,
+                sender: req.user._id,
+                recipient: userId,
                 order: order._id,
                 subject: `Order #${order._id.toString().substring(0, 8)} Cancelled`,
                 content: reasonMessage
             });
 
-            // Send SMS to user
-            if (order.user.phone) {
-                let smsPhone = order.user.phone.toString().trim();
-                // Normalize to +254 format if beginning with 0
+            const userPhone = order.user?.phone;
+            if (userPhone) {
+                let smsPhone = userPhone.toString().trim();
                 if (smsPhone.startsWith('0')) smsPhone = '+254' + smsPhone.substring(1);
                 else if (smsPhone.startsWith('254')) smsPhone = '+' + smsPhone;
                 else if (!smsPhone.startsWith('+')) smsPhone = '+' + smsPhone;
-
                 const smsMsg = `Jeien Agencies: Your order #${order._id.toString().substring(0, 8)} has been cancelled. Reason: ${reasonMessage}`;
                 await sendSMS(smsPhone, smsMsg).catch(err => console.error('SMS Send fail on cancel:', err));
             }
@@ -167,9 +158,8 @@ const updateOrderStatus = async (req, res) => {
         const { status } = req.body;
         const order = await Order.findById(req.params.id);
         if (!order) return res.status(404).json({ message: 'Order not found' });
-
         order.status = status;
-        const updated = await order.save();
+        const updated = await Order.save(order);
         res.json(updated);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -178,11 +168,7 @@ const updateOrderStatus = async (req, res) => {
 
 const getStats = async (req, res) => {
     try {
-        const [salesAgg] = await Order.aggregate([
-            { $match: { isPaid: true } },
-            { $group: { _id: null, total: { $sum: '$totalPrice' } } }
-        ]);
-        const salesAmount = salesAgg ? salesAgg.total : 0;
+        const salesAmount = await Order.sumPaidTotalPrice();
 
         const [usersCount, vendorsCount, ordersCount, productsCount, pendingProducts] = await Promise.all([
             User.countDocuments({ role: 'user' }),
@@ -192,54 +178,13 @@ const getStats = async (req, res) => {
             Product.countDocuments({ isApproved: false }),
         ]);
 
-        // Monthly revenue for chart (last 6 months)
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
-        const monthlyRevenue = await Order.aggregate([
-            { $match: { isPaid: true, createdAt: { $gte: sixMonthsAgo } } },
-            {
-                $group: {
-                    _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
-                    total: { $sum: '$totalPrice' },
-                    count: { $sum: 1 }
-                }
-            },
-            { $sort: { '_id.year': 1, '_id.month': 1 } }
-        ]);
+        const monthlyRevenue = await Order.monthlyRevenue(sixMonthsAgo);
 
-        // Top Categories based on actual sales
-        const topCategoriesAgg = await Order.aggregate([
-            { $match: { isPaid: true } },
-            { $unwind: '$orderItems' },
-            {
-                $lookup: {
-                    from: 'products',
-                    localField: 'orderItems.product',
-                    foreignField: '_id',
-                    as: 'productInfo'
-                }
-            },
-            { $unwind: '$productInfo' },
-            {
-                $group: {
-                    _id: '$productInfo.category',
-                    sales: { $sum: { $multiply: ['$orderItems.price', '$orderItems.qty'] } }
-                }
-            },
-            { $sort: { sales: -1 } },
-            { $limit: 4 },
-            {
-                $project: {
-                    _id: 0,
-                    name: '$_id',
-                    sales: 1
-                }
-            }
-        ]);
-
-        // Assign colors dynamically for the frontend
+        const topCategoriesRaw = await Order.topCategories();
         const colors = ['#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#10b981', '#ec4899'];
-        const topCategories = topCategoriesAgg.map((cat, index) => ({
+        const topCategories = topCategoriesRaw.map((cat, index) => ({
             ...cat,
             color: colors[index % colors.length]
         }));
@@ -248,13 +193,8 @@ const getStats = async (req, res) => {
             salesAmount,
             commission: salesAmount * 0.07,
             vendorEarnings: salesAmount * 0.93,
-            usersCount,
-            vendorsCount,
-            ordersCount,
-            productsCount,
-            pendingProducts,
-            monthlyRevenue,
-            topCategories
+            usersCount, vendorsCount, ordersCount, productsCount, pendingProducts,
+            monthlyRevenue, topCategories
         });
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -268,24 +208,23 @@ const getReport = async (req, res) => {
         let data = [], fields = [];
 
         if (type === 'sales') {
-            const orders = await Order.find({ isPaid: true })
-                .populate('user', 'name email').sort({ paidAt: -1 });
+            const orders = await Order.find({ isPaid: true });
             data = orders.map(o => ({
                 orderId: o._id, customer: o.user?.name, email: o.user?.email,
                 amount: o.totalPrice, status: o.status, paidAt: o.paidAt
             }));
             fields = ['orderId', 'customer', 'email', 'amount', 'status', 'paidAt'];
         } else if (type === 'users') {
-            const users = await User.find({}).select('-password');
+            const users = await User.find({});
             data = users.map(u => ({ id: u._id, name: u.name, email: u.email, role: u.role, createdAt: u.createdAt }));
             fields = ['id', 'name', 'email', 'role', 'createdAt'];
         } else if (type === 'vendors') {
-            const vendors = await User.find({ role: 'vendor' }).select('-password');
+            const vendors = await User.find({ role: 'vendor' });
             data = vendors.map(v => ({ id: v._id, name: v.name, store: v.storeName, status: v.vendorStatus, createdAt: v.createdAt }));
             fields = ['id', 'name', 'store', 'status', 'createdAt'];
         } else if (type === 'products') {
-            const products = await Product.find({}).populate('vendor', 'name storeName');
-            data = products.map(p => ({ id: p._id, name: p.name, vendor: p.vendor?.storeName, price: p.price, stock: p.stock, approved: p.isApproved }));
+            const products = await Product.find({});
+            data = products.map(p => ({ id: p._id, name: p.name, vendor: p.vendor?.storeName || p.vendorStoreName, price: p.price, stock: p.stock, approved: p.isApproved }));
             fields = ['id', 'name', 'vendor', 'price', 'stock', 'approved'];
         } else {
             return res.status(400).json({ message: 'Unknown report type' });
@@ -325,8 +264,8 @@ const createAdminProduct = async (req, res) => {
             salesType: salesType || 'retail',
             wholesalePrice: wholesalePrice ? Number(wholesalePrice) : undefined,
             wholesaleMinQty: wholesaleMinQty ? Number(wholesaleMinQty) : undefined,
-            vendor: req.user._id,   // admin is the vendor for these products
-            isApproved: true,        // auto-approved
+            vendor: req.user._id,
+            isApproved: true,
             isActive: true,
         });
 
@@ -342,7 +281,7 @@ const updateAdminProduct = async (req, res) => {
         const fields = ['name', 'description', 'price', 'originalPrice', 'category', 'stock', 'images', 'colors', 'sizes', 'tags', 'salesType', 'wholesalePrice', 'wholesaleMinQty', 'isActive', 'isFeatured'];
         fields.forEach(f => { if (req.body[f] !== undefined) product[f] = req.body[f]; });
 
-        const updated = await product.save();
+        const updated = await Product.save(product);
         res.json(updated);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -363,14 +302,12 @@ const updateSettings = async (req, res) => {
             for (const update of updates) {
                 await Setting.findOneAndUpdate({ key: update.key }, { value: update.value }, { upsert: true });
             }
-            res.json({ message: 'Updated' });
         } else {
-            // Fallback for single object patches (legacy code support)
             for (const [key, value] of Object.entries(updates)) {
                 await Setting.findOneAndUpdate({ key }, { value }, { upsert: true });
             }
-            res.json({ message: 'Updated' });
         }
+        res.json({ message: 'Updated' });
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
@@ -382,19 +319,15 @@ const updateUser = async (req, res) => {
         user.name = req.body.name || user.name;
         user.email = req.body.email || user.email;
         if (req.body.phone) user.phone = req.body.phone;
-        if (req.body.role && req.user.role === 'admin') user.role = req.body.role; // Only admin changes roles
+        if (req.body.role && req.user.role === 'admin') user.role = req.body.role;
         if (req.body.vendorStatus) user.vendorStatus = req.body.vendorStatus;
         if (req.body.storeName) user.storeName = req.body.storeName;
 
-        const updated = await user.save();
+        const updated = await User.save(user);
         res.json({
-            _id: updated._id,
-            name: updated.name,
-            email: updated.email,
-            role: updated.role,
-            phone: updated.phone,
-            vendorStatus: updated.vendorStatus,
-            storeName: updated.storeName
+            _id: updated._id, name: updated.name, email: updated.email,
+            role: updated.role, phone: updated.phone,
+            vendorStatus: updated.vendorStatus, storeName: updated.storeName
         });
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -402,25 +335,17 @@ const updateUser = async (req, res) => {
 const broadcastMessage = async (req, res) => {
     try {
         const { targetGroup, messageType, subject, message } = req.body;
-
         if (!message) return res.status(400).json({ message: 'Message content is required' });
 
-        let query = {};
-        if (targetGroup === 'vendors') query.role = 'vendor';
-        else if (targetGroup === 'buyers') query.role = 'user';
-        // If 'all', empty query matches all
+        let filter = {};
+        if (targetGroup === 'vendors') filter.role = 'vendor';
+        else if (targetGroup === 'buyers') filter.role = 'user';
 
-        const users = await User.find(query).select('_id email phone');
-
-        // Note: For a real production app with 1M+ users, you'd use a queue (BullMQ/RabbitMQ).
-        // For this scale, a Promise.all or for-loop works fine.
-
-        let successCount = 0;
-        let failCount = 0;
+        const users = await User.find(filter);
+        let successCount = 0, failCount = 0;
 
         for (const user of users) {
             try {
-                // 1. Always save as an internal DB message
                 await Message.create({
                     sender: req.user._id,
                     recipient: user._id,
@@ -428,16 +353,13 @@ const broadcastMessage = async (req, res) => {
                     content: message
                 });
 
-                // 2. If SMS requested and user has phone
                 if (messageType === 'sms' && user.phone) {
                     let smsPhone = user.phone.toString().trim();
                     if (smsPhone.startsWith('0')) smsPhone = '+254' + smsPhone.substring(1);
                     else if (smsPhone.startsWith('254')) smsPhone = '+' + smsPhone;
                     else if (!smsPhone.startsWith('+')) smsPhone = '+' + smsPhone;
-
                     await sendSMS(smsPhone, message);
                 }
-                // (Email implementation omitted/mocked as typical internal message)
                 successCount++;
             } catch (err) {
                 failCount++;
@@ -446,30 +368,19 @@ const broadcastMessage = async (req, res) => {
         }
 
         res.json({ message: 'Broadcast complete', successCount, failCount, total: users.length });
-    } catch (e) {
-        res.status(500).json({ message: e.message });
-    }
+    } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
 const getMessages = async (req, res) => {
     try {
-        const Message = require('../models/Message');
-        const messages = await Message.find()
-            .populate('sender', 'name role')
-            .populate('recipient', 'name role')
-            .sort({ createdAt: -1 })
-            .limit(100);
-
+        const messages = await Message.find({ limit: 100 });
         res.json(messages);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
 const getSecurityLogs = async (req, res) => {
     try {
-        const logs = await require('../models/ActionLog').find({})
-            .populate('user', 'name role')
-            .sort({ createdAt: -1 })
-            .limit(100);
+        const logs = await require('../models/ActionLog').find({});
         res.json(logs);
     } catch (e) { res.status(500).json({ message: e.message }); }
 };
@@ -477,12 +388,8 @@ const getSecurityLogs = async (req, res) => {
 const getReviews = async (req, res) => {
     try {
         const Review = require('../models/Review');
-        const reviews = await Review.find({})
-            .populate('user', 'name email')
-            .populate({ path: 'product', select: 'name', populate: { path: 'vendor', select: 'storeName' } })
-            .sort({ createdAt: -1 });
+        const reviews = await Review.find({});
 
-        // Map to format expected by AdminReviewsTab
         const formatted = reviews.map(r => ({
             id: r._id,
             product: r.product?.name || 'Unknown Product',
@@ -504,9 +411,8 @@ const updateReviewStatus = async (req, res) => {
         const Review = require('../models/Review');
         const review = await Review.findById(req.params.id);
         if (!review) return res.status(404).json({ message: 'Review not found' });
-
         if (req.body.status) review.status = req.body.status;
-        await review.save();
+        await Review.save(review);
         res.json({ message: 'Review status updated' });
     } catch (e) { res.status(500).json({ message: e.message }); }
 };

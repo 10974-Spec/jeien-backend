@@ -6,7 +6,7 @@ const { protect, admin } = require('../middleware/authMiddleware');
 // Public: get all active banners (sorted by order)
 router.get('/', async (req, res) => {
     try {
-        const banners = await Banner.find({ isActive: true }).sort({ order: 1 });
+        const banners = await Banner.find({ isActive: true });
         res.json(banners);
     } catch (e) { res.status(500).json({ message: e.message }); }
 });
@@ -14,7 +14,7 @@ router.get('/', async (req, res) => {
 // Admin: get ALL banners (incl. inactive)
 router.get('/all', protect, admin, async (req, res) => {
     try {
-        const banners = await Banner.find({}).sort({ order: 1 });
+        const banners = await Banner.find({});
         res.json(banners);
     } catch (e) { res.status(500).json({ message: e.message }); }
 });

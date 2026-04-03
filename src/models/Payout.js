@@ -1,38 +1,49 @@
-const mongoose = require('mongoose');
+const { pool } = require('../config/db');
 
-const payoutSchema = new mongoose.Schema({
-    vendor: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true,
-    },
-    orderItem: { // Link to specific item in an order if doing per-item payouts, or Order schema needs adjust
-        // For simplicity, let's link to the Order and maybe specific product reference if needed,
-        // or just calculate total payout per order.
-        // Given the requirement: "Funds are released... after order completion"
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Order',
-        required: true,
-    },
-    amount: {
-        type: Number,
-        required: true, // The 93% amount
-    },
-    commission: {
-        type: Number,
-        required: true, // The 7% amount
-    },
-    status: {
-        type: String,
-        enum: ['pending', 'approved', 'paid', 'failed'],
-        default: 'pending',
-    },
-    transactionId: String, // B2C transaction ID
-    paidAt: Date,
-    createdAt: {
-        type: Date,
-        default: Date.now,
-    },
-});
+const rowToPayout = (row) => {
+    if (!row) return null;
+    return {
+        _id: row.id, id: row.id,
+        vendor: row.vendor_id,
+        orderItem: row.order_id,
+        amount: parseFloat(row.amount),
+        commission: parseFloat(row.commission),
+        status: row.status,
+        transactionId: row.transaction_id,
+        paidAt: row.paid_at,
+        createdAt: row.created_at,
+    };
+};
 
-module.exports = mongoose.model('Payout', payoutSchema);
+const Payout = {
+    async create(data) {
+        const { rows } = await pool.query(
+            `INSERT INTO payouts (vendor_id, order_id, amount, commission, status)
+             VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+            [data.vendor, data.orderItem, data.amount, data.commission, data.status || 'pending']
+        );
+        return rowToPayout(rows[0]);
+    },
+    async find(filter = {}) {
+        let query = 'SELECT * FROM payouts WHERE 1=1';
+        const values = [];
+        if (filter.vendor) { values.push(filter.vendor); query += ` AND vendor_id = $${values.length}`; }
+        if (filter.status) { values.push(filter.status); query += ` AND status = $${values.length}`; }
+        query += ' ORDER BY created_at DESC';
+        const { rows } = await pool.query(query, values);
+        return rows.map(rowToPayout);
+    },
+    async findById(id) {
+        const { rows } = await pool.query('SELECT * FROM payouts WHERE id = $1', [id]);
+        return rowToPayout(rows[0]);
+    },
+    async save(payout) {
+        const { rows } = await pool.query(
+            `UPDATE payouts SET status=$1, transaction_id=$2, paid_at=$3 WHERE id=$4 RETURNING *`,
+            [payout.status, payout.transactionId || null, payout.paidAt || null, payout._id]
+        );
+        return rowToPayout(rows[0]);
+    },
+};
+
+module.exports = Payout;

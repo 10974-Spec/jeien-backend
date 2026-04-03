@@ -1,13 +1,12 @@
 const Category = require('../models/Category');
+const { pool } = require('../config/db');
 
 // @desc    Get all categories
 // @route   GET /api/categories
 // @access  Public
 const getCategories = async (req, res) => {
     try {
-        const categories = await Category.find({})
-            .populate('parentCategory', 'name slug')
-            .sort({ name: 1 });
+        const categories = await Category.find({});
         res.json(categories);
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });
@@ -19,7 +18,7 @@ const getCategories = async (req, res) => {
 // @access  Public
 const getCategoryById = async (req, res) => {
     try {
-        const category = await Category.findById(req.params.id).populate('parentCategory', 'name slug');
+        const category = await Category.findById(req.params.id);
         if (category) {
             res.json(category);
         } else {
@@ -37,16 +36,14 @@ const createCategory = async (req, res) => {
     try {
         const { name, slug, image, isActive, parentCategory } = req.body;
 
-        const categoryExists = await Category.findOne({ $or: [{ name }, { slug }] });
-        if (categoryExists) {
+        // Check for duplicate name or slug
+        const nameCheck = await Category.findOne({ name });
+        const slugCheck = await Category.findOne({ slug });
+        if (nameCheck || slugCheck) {
             return res.status(400).json({ message: 'Category with this name or slug already exists' });
         }
 
-        const categoryData = { name, slug, image, isActive };
-        if (parentCategory) {
-            categoryData.parentCategory = parentCategory;
-        }
-
+        const categoryData = { name, slug, image, isActive, parentCategory: parentCategory || null };
         const category = await Category.create(categoryData);
         res.status(201).json(category);
     } catch (error) {
@@ -64,15 +61,14 @@ const updateCategory = async (req, res) => {
             return res.status(404).json({ message: 'Category not found' });
         }
 
-        category.name = req.body.name || category.name;
-        category.slug = req.body.slug || category.slug;
-        if (req.body.image !== undefined) category.image = req.body.image;
-        if (req.body.isActive !== undefined) category.isActive = req.body.isActive;
-        if (req.body.parentCategory !== undefined) {
-            category.parentCategory = req.body.parentCategory ? req.body.parentCategory : null;
-        }
+        const updatedData = {
+            name: req.body.name || category.name,
+            slug: req.body.slug || category.slug,
+            ...(req.body.image !== undefined ? { image: req.body.image } : {}),
+            ...(req.body.isActive !== undefined ? { isActive: req.body.isActive } : {}),
+        };
 
-        const updatedCategory = await category.save();
+        const updatedCategory = await Category.findByIdAndUpdate(req.params.id, updatedData, { new: true });
         res.json(updatedCategory);
     } catch (error) {
         res.status(400).json({ message: error.message });
@@ -88,7 +84,7 @@ const deleteCategory = async (req, res) => {
         if (!category) {
             return res.status(404).json({ message: 'Category not found' });
         }
-        await category.deleteOne();
+        await Category.findByIdAndDelete(req.params.id);
         res.json({ message: 'Category removed' });
     } catch (error) {
         res.status(500).json({ message: error.message });

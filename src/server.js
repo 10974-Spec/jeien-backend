@@ -1,17 +1,19 @@
 const express = require('express');
 const dotenv = require('dotenv');
+const path = require('path');
+
+// Load env vars FIRST before importing DB config
+dotenv.config({ path: path.join(__dirname, '../.env') });
+
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const passport = require('passport');
-const path = require('path');
-const connectDB = require('./config/db');
+const { connectDB } = require('./config/db');
 const { initSettings } = require('./controllers/settingController');
 const { startKeepAlive } = require('./utils/keepAlive');
 
-// Load env vars first
-dotenv.config({ path: path.join(__dirname, '../.env') });
-
+// Connect to Neon PostgreSQL and init settings
 connectDB().then(() => {
     initSettings().catch(console.error);
 });
@@ -21,9 +23,7 @@ const app = express();
 // Security
 app.use(helmet({ contentSecurityPolicy: false }));
 
-
-// CORS — dynamically reflect the requesting origin so any frontend URL works 
-// while still supporting credentials (cookies/auth headers).
+// CORS
 app.use(cors({
     origin: true,
     credentials: true,
@@ -33,13 +33,12 @@ app.use(cors({
 
 // Rate Limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
+    windowMs: 15 * 60 * 1000,
     max: 200,
     message: 'Too many requests from this IP, please try again later.'
 });
 app.use(limiter);
 
-// Stricter rate limit for auth routes
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 20,
@@ -65,7 +64,6 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const bannerRoutes = require('./routes/bannerRoutes');
 const disputeRoutes = require('./routes/disputeRoutes');
 
-
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
@@ -80,10 +78,9 @@ app.use('/api/banners', bannerRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/disputes', disputeRoutes);
 
-
 // Health Check
 app.get('/', (req, res) => {
-    res.json({ status: 'ok', message: 'API is running...', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok', message: 'API is running (Neon PostgreSQL)...', timestamp: new Date().toISOString() });
 });
 
 // Global Error Handler

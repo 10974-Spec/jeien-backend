@@ -4,16 +4,18 @@
  */
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 
+const bcrypt = require('bcryptjs');
+const { Pool } = require('@neondatabase/serverless');
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const User = require('./models/User');
 
 async function seed() {
-    await mongoose.connect(process.env.MONGODB_URI || process.env.MONGO_URI);
-    console.log('✅ Connected to DB');
+    // Verify connection
+    await pool.query('SELECT 1');
+    console.log('✅ Connected to Neon PostgreSQL');
 
-    // Create or update admin
     const adminEmail = 'caprufru@gmail.com';
     const adminPass = await bcrypt.hash('jeien@2026MAIN@', 10);
 
@@ -26,18 +28,19 @@ async function seed() {
             phone: '0746917511',
             role: 'admin',
             isVerified: true,
+            vendorStatus: 'approved',
         });
         console.log('✅ Admin user created:', adminEmail);
     } else {
         admin.password = adminPass;
         admin.role = 'admin';
         admin.isVerified = true;
-        await admin.save();
+        const updated = await User.save(admin);
         console.log('✅ Admin user updated:', adminEmail);
     }
 
     console.log('Admin ID:', admin._id.toString());
-    await mongoose.disconnect();
+    await pool.end();
     console.log('Done!');
 }
 
