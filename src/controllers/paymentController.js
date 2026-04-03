@@ -141,13 +141,13 @@ const mpesaCallback = async (req, res) => {
             payment.mpesaReceiptNumber = mpesaReceiptItem?.Value;
             payment.transactionDate = dateItem?.Value; // Needs formatting likely
             payment.resultDesc = ResultDesc;
-            await payment.save();
+            await Payment.save(payment);
 
             // Update Order
-            const order = await Order.findById(payment.order).populate('user', 'name phone');
+            const order = await Order.findById(payment.order);
             if (order) {
                 order.isPaid = true;
-                order.paidAt = Date.now();
+                order.paidAt = new Date().toISOString();
                 order.paymentResult = {
                     id: mpesaReceiptItem?.Value,
                     status: 'completed',
@@ -155,7 +155,7 @@ const mpesaCallback = async (req, res) => {
                     email_address: order.user?.email || '', // simplified
                 };
                 order.status = 'paid';
-                await order.save();
+                await Order.save(order);
 
                 // Format Phone Number for SMS (ensure starting with +)
                 const rawPhone = payment.phoneNumber?.toString() || order.shippingAddress?.phone || (order.user && order.user.phone);
@@ -174,7 +174,7 @@ const mpesaCallback = async (req, res) => {
             // Failed
             payment.status = 'failed';
             payment.resultDesc = ResultDesc;
-            await payment.save();
+            await Payment.save(payment);
         }
 
         res.json({ result: 'queued' });
